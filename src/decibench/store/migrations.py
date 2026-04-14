@@ -52,6 +52,16 @@ def run_migrations(conn: sqlite3.Connection) -> None:
         )
         conn.commit()
 
+    if current_version < 3:
+        logger.info("Migrating Decibench Store to Schema v3 (Imported Evaluations)")
+        _migrate_v2_to_v3(conn)
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (3)")
+        conn.execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+            ("schema_version", "3"),
+        )
+        conn.commit()
+
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     """Migrate from v1 (JSON mostly) to v2 (normalized dashboards tables)."""
@@ -172,3 +182,54 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     # We do NOT backfill the new tables with existing data in `runs` and `call_traces` payloads
     # immediately because this could be a heavy operation for large stores.
     # Future versions can introduce a background job or CLI command to backfill if needed.
+
+
+def _migrate_v2_to_v3(conn: sqlite3.Connection) -> None:
+    """Add first-class storage for imported-call evaluation history."""
+    conn.execute("PRAGMA foreign_keys = ON")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS call_evaluations (
+            id TEXT PRIMARY KEY,
+            call_id TEXT NOT NULL,
+            source TEXT NOT NULL,
+            scenario_id TEXT NOT NULL,
+            score REAL NOT NULL,
+            passed INTEGER NOT NULL,
+            evaluated_at TEXT NOT NULL,
+            failure_summary TEXT NOT NULL, -- JSON list
+            payload TEXT NOT NULL,
+            FOREIGN KEY(call_id) REFERENCES call_traces(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS call_evaluation_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            evaluation_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            value REAL NOT NULL,
+            unit TEXT NOT NULL,
+            passed INTEGER NOT NULL,
+            FOREIGN KEY(evaluation_id) REFERENCES call_evaluations(id) ON DELETE CASCADE
+        )
+        """
+    )
+
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_evaluations_call_id ON call_evaluations(call_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_evaluations_source ON call_evaluations(source)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_evaluations_evaluated_at "
+        "ON call_evaluations(evaluated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_call_evaluation_metrics_evaluation_id "
+        "ON call_evaluation_metrics(evaluation_id)"
+    )

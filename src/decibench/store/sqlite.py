@@ -7,14 +7,15 @@ import os
 import sqlite3
 import tempfile
 from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from decibench.models import CallTrace, SuiteResult
+from decibench.models import CallTrace, EvalResult, SuiteResult
 from decibench.store.migrations import run_migrations
 from decibench.store.privacy import RedactionPolicy
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def default_store_path(base_dir: Path | None = None) -> Path:
@@ -98,7 +99,7 @@ class RunStore:
             # Meta table initialization
             conn.execute(
                 "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-                ("schema_version", "1"),  # Migrations will update this to 2
+                ("schema_version", "1"),  # Migrations will update this to the latest schema.
             )
 
             # Execute schema migrations
@@ -281,17 +282,24 @@ class RunStore:
 
         return trace.id
 
-    def list_call_traces(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_call_traces(
+        self,
+        limit: int = 20,
+        source: str | None = None,
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Return production call trace summaries newest first."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT id, source, target, started_at, duration_ms, imported_at
                 FROM call_traces
+                WHERE (? IS NULL OR source = ?)
+                  AND (? IS NULL OR imported_at >= ?)
                 ORDER BY imported_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                (source, source, since, since, limit),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -306,9 +314,115 @@ class RunStore:
             return None
         return CallTrace.model_validate(json.loads(row["payload"]))
 
+    def save_call_evaluation(self, trace: CallTrace, result: EvalResult) -> str:
+        """Persist an imported-call evaluation and return its evaluation id."""
+        evaluated_at = datetime.now(UTC).isoformat()
+        evaluation_id = self._call_evaluation_id(trace.id, evaluated_at)
+        payload = self.redactor.redact_dict(result.model_dump(mode="json"))
+
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO call_evaluations (
+                    id, call_id, source, scenario_id, score, passed, evaluated_at, failure_summary, payload
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evaluation_id,
+                    trace.id,
+                    trace.source,
+                    result.scenario_id,
+                    result.score,
+                    1 if result.passed else 0,
+                    evaluated_at,
+                    json.dumps(result.failure_summary),
+                    json.dumps(payload, sort_keys=True),
+                ),
+            )
+            for metric in result.metrics.values():
+                conn.execute(
+                    """
+                    INSERT INTO call_evaluation_metrics (
+                        evaluation_id, name, value, unit, passed
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        evaluation_id,
+                        metric.name,
+                        metric.value,
+                        metric.unit,
+                        1 if metric.passed else 0,
+                    ),
+                )
+        return evaluation_id
+
+    def list_call_evaluations(
+        self,
+        limit: int = 20,
+        source: str | None = None,
+        failed_only: bool = False,
+        category: str | None = None,
+        call_id: str | None = None,
+        since: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return imported-call evaluation summaries newest first."""
+        category_like = f'%"{category}"%' if category else None
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, call_id, source, scenario_id, score, passed, evaluated_at, failure_summary
+                FROM call_evaluations
+                WHERE (? IS NULL OR source = ?)
+                  AND (? = 0 OR passed = 0)
+                  AND (? IS NULL OR failure_summary LIKE ?)
+                  AND (? IS NULL OR call_id = ?)
+                  AND (? IS NULL OR evaluated_at >= ?)
+                ORDER BY evaluated_at DESC
+                LIMIT ?
+                """,
+                (
+                    source,
+                    source,
+                    1 if failed_only else 0,
+                    category_like,
+                    category_like,
+                    call_id,
+                    call_id,
+                    since,
+                    since,
+                    limit,
+                ),
+            ).fetchall()
+
+        summaries: list[dict[str, Any]] = []
+        for row in rows:
+            summary = dict(row)
+            summary["passed"] = bool(summary["passed"])
+            summary["failure_summary"] = json.loads(summary["failure_summary"])
+            summaries.append(summary)
+        return summaries
+
+    def get_call_evaluation(self, evaluation_id: str) -> EvalResult | None:
+        """Load a stored imported-call evaluation by id."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM call_evaluations WHERE id = ?",
+                (evaluation_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return EvalResult.model_validate(json.loads(row["payload"]))
+
     @staticmethod
     def _run_id(result: SuiteResult) -> str:
         safe_target = "".join(ch if ch.isalnum() else "-" for ch in result.target).strip("-")
         safe_suite = "".join(ch if ch.isalnum() else "-" for ch in result.suite).strip("-")
         timestamp = result.timestamp.replace(":", "").replace(".", "").replace("+", "Z")
         return f"{timestamp}-{safe_suite}-{safe_target}"[:160]
+
+    @staticmethod
+    def _call_evaluation_id(call_id: str, evaluated_at: str) -> str:
+        safe_call_id = "".join(ch if ch.isalnum() else "-" for ch in call_id).strip("-")
+        timestamp = evaluated_at.replace(":", "").replace(".", "").replace("+", "Z")
+        return f"{timestamp}-{safe_call_id}"[:160]

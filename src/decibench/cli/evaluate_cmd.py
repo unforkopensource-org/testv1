@@ -21,13 +21,29 @@ from decibench.store.sqlite import RunStore
 @click.command("evaluate-calls")
 @click.option("--limit", default=10, help="Number of traces to evaluate.")
 @click.option("--failed-only", is_flag=True, help="Only show traces that failed evaluation.")
-def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
+@click.option("--source", default=None, help="Only evaluate traces from a given source.")
+@click.option("--since", default=None, help="Only evaluate traces imported since this ISO timestamp.")
+@click.option(
+    "--category",
+    "failure_category",
+    default=None,
+    help="Only show results matching a failure category.",
+)
+@click.option("--store/--no-store", "persist_results", default=True, help="Persist evaluation results.")
+def evaluate_calls_cmd(
+    limit: int,
+    failed_only: bool,
+    source: str | None,
+    since: str | None,
+    failure_category: str | None,
+    persist_results: bool,
+) -> None:
     """Evaluate imported production calls and grade them."""
     console = Console()
     store = RunStore()
     config = load_config(Path("decibench.toml"))
 
-    traces_meta = store.list_call_traces(limit=limit)
+    traces_meta = store.list_call_traces(limit=limit, source=source, since=since)
     if not traces_meta:
         console.print("[yellow]No imported call traces found.[/yellow]")
         return
@@ -40,7 +56,7 @@ def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
     evaluators = [
         ComplianceEvaluator(),
         HallucinationEvaluator(),
-        TaskCompletionEvaluator()
+        TaskCompletionEvaluator(),
     ]
 
     eval_service = ImportedCallEvaluator(evaluators, config, judge=judge)
@@ -52,6 +68,7 @@ def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
         table.add_column("Score", justify="right")
         table.add_column("Pass/Fail", justify="center")
         table.add_column("Failures", style="red")
+        table.add_column("Stored", justify="center")
 
         for meta in traces_meta:
             trace = store.get_call_trace(meta["id"])
@@ -59,12 +76,17 @@ def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
                 continue
 
             eval_result = await eval_service.evaluate_trace(trace)
+            evaluation_id = store.save_call_evaluation(trace, eval_result) if persist_results else None
 
             if failed_only and eval_result.passed:
                 continue
 
+            if failure_category and failure_category not in eval_result.failure_summary:
+                continue
+
             status = "[green]PASS[/green]" if eval_result.passed else "[red]FAIL[/red]"
             color = "green" if eval_result.passed else "red"
+            stored_str = evaluation_id[:12] if evaluation_id else "-"
 
             # Format failures string
             fail_str = ", ".join(eval_result.failure_summary) if eval_result.failure_summary else ""
@@ -75,7 +97,8 @@ def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
                 trace.id[:12],
                 f"[{color}]{eval_result.score:.1f}[/{color}]",
                 status,
-                fail_str
+                fail_str,
+                stored_str,
             )
 
         console.print(table)
