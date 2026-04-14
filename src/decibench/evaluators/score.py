@@ -255,9 +255,10 @@ class DecibenchScorer:
         ):
             return value
 
-        # --- Keyword metrics: binary pass/fail ---
+        # --- Keyword metrics: proportional, not binary ---
+        # 100% hit = 100, 80% = 60, 50% = 25, 0% = 0
         if name in ("keyword_presence", "keyword_absence"):
-            return 100.0 if metric.passed else 0.0
+            return value
 
         # --- Interruption metrics: already 0-100% ---
         if name in ("interruption_recovery", "barge_in_handling"):
@@ -270,21 +271,21 @@ class DecibenchScorer:
     def _redistribute_weights(weights: ScoringWeights) -> dict[str, float]:
         """Redistribute weights when semantic evaluators are disabled.
 
-        Removes task_completion and conversation (need judge),
-        redistributes their weight proportionally to remaining categories.
+        Without a judge, task_completion is fully removed.
+        Conversation keeps its weight only because WER/keyword metrics
+        still run deterministically. Weight is redistributed proportionally.
         """
         deterministic = {
             "latency": weights.latency,
             "audio_quality": weights.audio_quality,
+            "conversation": weights.conversation,  # WER + keywords are deterministic
             "robustness": weights.robustness,
             "interruption": weights.interruption,
             "compliance": weights.compliance,
         }
 
-        # Add WER-based conversation score (deterministic)
-        deterministic["conversation"] = weights.conversation * 0.5
-
-        removed_weight = weights.task_completion + weights.conversation * 0.5
+        # Only task_completion is fully removed (needs judge for goal assessment)
+        removed_weight = weights.task_completion
         deterministic_total = sum(deterministic.values())
 
         if deterministic_total > 0:

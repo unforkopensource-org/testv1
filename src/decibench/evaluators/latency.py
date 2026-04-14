@@ -7,6 +7,7 @@ Two modes:
 
 from __future__ import annotations
 
+import math
 import statistics
 from typing import Any
 
@@ -49,11 +50,10 @@ class LatencyEvaluator(BaseEvaluator):
         turn_latencies = self._calculate_turn_latencies(events)
         if turn_latencies:
             sorted_latencies = sorted(turn_latencies)
-            n = len(sorted_latencies)
 
-            p50 = sorted_latencies[n // 2] if n > 0 else 0
-            p95 = sorted_latencies[int(n * 0.95)] if n >= 2 else (sorted_latencies[-1] if n > 0 else 0)
-            p99 = sorted_latencies[int(n * 0.99)] if n >= 2 else (sorted_latencies[-1] if n > 0 else 0)
+            p50 = self._percentile(sorted_latencies, 50)
+            p95 = self._percentile(sorted_latencies, 95)
+            p99 = self._percentile(sorted_latencies, 99)
 
             p50_max = context.get("p50_max_ms", 800)
             p95_max = context.get("p95_max_ms", 1500)
@@ -142,11 +142,28 @@ class LatencyEvaluator(BaseEvaluator):
                     latencies.append(latency)
                 last_turn_end_ms = None
 
-        # If no explicit turn ends, use audio gaps
+        # If no explicit turn ends, measure gaps between audio bursts
         if not latencies:
             audio_events = [e for e in events if e.type == EventType.AGENT_AUDIO]
             if len(audio_events) >= 2:
-                # Use first audio event timestamp as TTFW-like measurement
-                latencies.append(audio_events[0].timestamp_ms)
+                for i in range(1, len(audio_events)):
+                    gap = audio_events[i].timestamp_ms - audio_events[i - 1].timestamp_ms
+                    # Only count gaps > 200ms as inter-turn pauses (not intra-stream chunks)
+                    if gap > 200:
+                        latencies.append(gap)
 
         return latencies
+
+    @staticmethod
+    def _percentile(sorted_values: list[float], p: float) -> float:
+        """Nearest-rank percentile. Returns an actually-observed value.
+
+        For latency monitoring, nearest-rank is preferred (matches
+        Prometheus/HDR Histogram behavior). Always returns a real
+        measurement, correct even for N=1.
+        """
+        n = len(sorted_values)
+        if n == 0:
+            return 0.0
+        rank = max(1, math.ceil(p / 100.0 * n))
+        return sorted_values[rank - 1]

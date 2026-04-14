@@ -129,22 +129,45 @@ class TaskCompletionEvaluator(BaseEvaluator):
         summary: CallSummary,
         transcript: TranscriptResult,
     ) -> float | None:
-        """Check if the agent extracted the right values from caller speech."""
-        expected_slots: dict[str, str] = {}
-        for turn in scenario.conversation:
-            if turn.role == "agent" and turn.expect and turn.expect.must_extract:
-                expected_slots.update(turn.expect.must_extract)
+        """Check if the agent extracted the right values from caller speech.
 
-        if not expected_slots:
+        Uses per-turn checking: matches expected slots against the
+        transcript segment closest to the relevant turn, not the full blob.
+        Falls back to full text if segments aren't available.
+        """
+        # Collect expected slots with their turn index
+        slot_checks: list[tuple[int, dict[str, str]]] = []
+        agent_turn_idx = 0
+        for turn in scenario.conversation:
+            if turn.role == "agent":
+                if turn.expect and turn.expect.must_extract:
+                    slot_checks.append((agent_turn_idx, turn.expect.must_extract))
+                agent_turn_idx += 1
+
+        if not slot_checks:
             return None
 
-        agent_text = transcript.text.lower()
-        correct = 0
-        for _slot_name, expected_value in expected_slots.items():
-            if expected_value.lower() in agent_text:
-                correct += 1
+        # Build per-turn agent text from segments
+        agent_segments = [
+            seg.text.lower() for seg in transcript.segments if seg.text
+        ] if transcript.segments else []
+        full_text = transcript.text.lower()
 
-        return (correct / len(expected_slots)) * 100
+        correct = 0
+        total = 0
+        for turn_idx, slots in slot_checks:
+            # Pick text for this specific turn
+            if agent_segments and turn_idx < len(agent_segments):
+                check_text = agent_segments[turn_idx]
+            else:
+                check_text = full_text
+
+            for _slot_name, expected_value in slots.items():
+                total += 1
+                if expected_value.lower() in check_text:
+                    correct += 1
+
+        return (correct / total) * 100 if total > 0 else 100.0
 
     @staticmethod
     async def _judge_task_completion(

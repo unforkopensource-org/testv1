@@ -118,15 +118,27 @@ class InterruptionEvaluator(BaseEvaluator):
 
         total_overlap = 0.0
         for int_time in interruption_times:
-            # Sum agent audio that arrived after the interruption
-            for event in events:
-                if (
-                    event.type == EventType.AGENT_AUDIO
-                    and event.timestamp_ms > int_time
-                    and event.timestamp_ms < int_time + 3000  # 3s window
-                ):
-                    # Each audio event ≈ 100ms chunk
-                    total_overlap += 100.0
+            # Collect agent audio events within 3s after interruption
+            post_int_audio = [
+                e for e in events
+                if e.type == EventType.AGENT_AUDIO
+                and int_time < e.timestamp_ms < int_time + 3000
+            ]
+            if len(post_int_audio) >= 2:
+                # Use timestamp span of overlapping audio
+                first_ts = post_int_audio[0].timestamp_ms
+                last_ts = post_int_audio[-1].timestamp_ms
+                # Add one chunk duration estimate for the last event
+                chunk_ms = (last_ts - first_ts) / (len(post_int_audio) - 1)
+                total_overlap += (last_ts - first_ts) + chunk_ms
+            elif len(post_int_audio) == 1:
+                # Single audio event: estimate chunk from audio data size
+                evt = post_int_audio[0]
+                if evt.audio:
+                    # 16-bit PCM at 16kHz = 32000 bytes/sec
+                    total_overlap += len(evt.audio) / 32.0
+                else:
+                    total_overlap += 100.0  # Conservative fallback
 
         return total_overlap
 

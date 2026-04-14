@@ -177,6 +177,7 @@ class DemoConnector(BaseConnector):
         self._recorded_audio = bytearray()
         self._turn_index = 0
         self._caller_audio_hash = ""
+        self._last_caller_text = ""
 
     async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
         logger.info("Starting demo agent (built-in)")
@@ -194,12 +195,12 @@ class DemoConnector(BaseConnector):
         # Hash the incoming audio to deterministically select a response
         self._caller_audio_hash = hashlib.md5(audio.data[:1000]).hexdigest()[:8]  # noqa: S324
         self._turn_index += 1
+        # Store caller text hint if available (set by orchestrator via handle state)
+        self._last_caller_text = handle.state.get(f"caller_text_{self._turn_index}", "")
 
     async def receive_events(self, handle: ConnectionHandle) -> AsyncIterator[AgentEvent]:
-        # Select response based on turn index
-        response_keys = list(_DEMO_RESPONSES.keys())
-        idx = (self._turn_index - 1) % len(response_keys)
-        response = _DEMO_RESPONSES[response_keys[idx]]
+        # Select response based on caller text keywords, then turn index fallback
+        response = self._select_response()
 
         # Simulate realistic latency
         latency_ms = response["latency_ms"]
@@ -250,6 +251,36 @@ class DemoConnector(BaseConnector):
         )
         self._events.append(turn_end)
         yield turn_end
+
+    def _select_response(self) -> dict[str, Any]:
+        """Select a demo response based on caller text keywords.
+
+        Matches caller intent to the most appropriate response instead
+        of cycling blindly through responses by turn index.
+        """
+        text = self._last_caller_text.lower()
+        response_keys = list(_DEMO_RESPONSES.keys())
+
+        # Keyword-to-response mapping
+        _keyword_map: list[tuple[list[str], str]] = [
+            (["hello", "hi ", "anyone there", "good morning", "good afternoon"], "greeting"),
+            (["schedule", "appointment", "book"], "booking"),
+            (["tuesday", "confirm", "yes", "that works"], "confirmation"),
+            (["complete", "done", "all set"], "complete"),
+            (["thank", "bye", "goodbye", "that's all"], "farewell"),
+            (["order", "status", "package", "shipping", "where is"], "support_lookup"),
+            (["cancel", "return", "refund", "complaint"], "support_resolve"),
+            (["help", "support", "problem", "issue", "not working"], "support_greeting"),
+            (["balance", "account", "check"], "error_demo"),
+        ]
+
+        for keywords, response_key in _keyword_map:
+            if any(kw in text for kw in keywords):
+                return _DEMO_RESPONSES[response_key]
+
+        # Fallback: cycle by turn index
+        idx = (self._turn_index - 1) % len(response_keys)
+        return _DEMO_RESPONSES[response_keys[idx]]
 
     async def disconnect(self, handle: ConnectionHandle) -> CallSummary:
         duration_ms = (time.monotonic_ns() - handle.start_time_ns) / 1_000_000

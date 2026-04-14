@@ -142,11 +142,11 @@ class MOSEvaluator(BaseEvaluator):
         signal = np.frombuffer(audio.data, dtype=np.int16).astype(np.float64)
 
         if len(signal) == 0:
-            return {"ovrl": 1.0, "method": "heuristic", "warning": "empty_audio"}
+            return {"ovrl": 1.0, "scoring_method": "heuristic", "warning": "empty_audio"}
 
         rms = np.sqrt(np.mean(signal ** 2))
         if rms < 10:
-            return {"ovrl": 1.0, "method": "heuristic", "warning": "silence"}
+            return {"ovrl": 1.0, "scoring_method": "heuristic", "warning": "silence"}
 
         peak = np.max(np.abs(signal))
         crest_factor = peak / rms if rms > 0 else 0
@@ -165,5 +165,5 @@ class MOSEvaluator(BaseEvaluator):
 
         return {
             "ovrl": round(float(np.clip(ovrl_est, 1.0, 4.0)), 2),  # Capped at 4.0 — heuristic can't claim >4
-            "method": "heuristic",
+            "scoring_method": "heuristic",
         }

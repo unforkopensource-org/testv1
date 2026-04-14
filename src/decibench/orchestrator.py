@@ -339,11 +339,19 @@ class Orchestrator:
 
                 last_caller_audio = caller_audio
 
+                # Pass caller text to connector via handle state (used by demo connector)
+                handle.state[f"caller_text_{turn_idx + 1}"] = turn.text or ""
+
                 turn_start = time.monotonic()
                 await connector.send_audio(handle, caller_audio)
 
-                async for _event in connector.receive_events(handle):
-                    pass
+                async for event in connector.receive_events(handle):
+                    # Detect per-turn interruptions for real-time awareness
+                    if event.type == EventType.INTERRUPTION:
+                        logger.debug(
+                            "Interruption detected at %.1fms in scenario '%s'",
+                            event.timestamp_ms, scenario.id,
+                        )
 
                 turn_duration = (time.monotonic() - turn_start) * 1000
                 spans.append(TraceSpan(
@@ -536,16 +544,24 @@ class Orchestrator:
             if values:
                 avg_value = sum(values) / len(values)
                 template = base.metrics[metric_name]
+
+                # Majority-vote pass/fail across runs (for metrics without thresholds)
+                pass_votes = sum(
+                    1 for r in runs
+                    if metric_name in r.metrics and r.metrics[metric_name].passed
+                )
+                majority_passed = pass_votes > len(runs) / 2
+
                 averaged_metrics[metric_name] = MetricResult(
                     name=template.name,
                     value=round(avg_value, 2),
                     unit=template.unit,
-                    passed=template.passed,  # Re-evaluate based on avg
+                    passed=majority_passed,
                     threshold=template.threshold,
                     details={"runs": len(values), "values": values},
                 )
 
-        # Re-check pass/fail with averaged values
+        # Re-check pass/fail with averaged values for metrics WITH thresholds
         for metric in averaged_metrics.values():
             if metric.threshold is not None:
                 lower_is_better = (

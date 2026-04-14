@@ -11,8 +11,6 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from decibench.connectors.base import BaseConnector
 from decibench.connectors.registry import register_connector
 from decibench.models import (
@@ -37,44 +35,16 @@ class VapiConnector(BaseConnector):
         self._web_call_url: str | None = None
 
     async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
-        # e.g. vapi://agent-id-123
-        agent_id = target.replace("vapi://", "")
-
-        api_key = config.get("vapi_api_key")
-        if not api_key:
-            import os
-            api_key = os.environ.get("VAPI_API_KEY")
-        if not api_key:
-            raise ValueError("vapi_api_key is required in config or VAPI_API_KEY env var")
-
-        logger.info(f"Initiating Vapi Web Call to agent: {agent_id}")
-
-        # Initiate the call
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.post(
-                    "https://api.vapi.ai/call/web",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={"assistantId": agent_id}
-                )
-                response.raise_for_status()
-                data = response.json()
-                self._call_id = data.get("id")
-                self._web_call_url = data.get("webCallUrl")
-            except httpx.HTTPError as e:
-                logger.error(f"Failed to initiate Vapi call: {e}")
-                raise RuntimeError(f"Vapi API Error: {e}") from e
-
-        if not self._web_call_url:
-            raise RuntimeError("Vapi API did not return a webCallUrl")
-
-        logger.info(f"Vapi call initiated: {self._call_id}")
-
-        return ConnectionHandle(
-            connector_type="vapi",
-            start_time_ns=time.monotonic_ns(),
-            state={"agent_id": agent_id, "call_id": self._call_id, "url": self._web_call_url},
+        # Fail fast: audio streaming is not yet implemented.
+        # Raising here prevents initiating a billable API call that would
+        # immediately crash on send_audio/receive_events anyway.
+        msg = (
+            "Vapi connector requires WebRTC media bridging (Daily.co) which is not yet "
+            "implemented in Decibench v1.0. Use the generic WebSocket connector with your "
+            "Vapi agent's WebSocket endpoint, or the demo connector for testing.\n"
+            "Track progress: https://github.com/decibench/decibench/issues"
         )
+        raise NotImplementedError(msg)
 
     async def send_audio(self, handle: ConnectionHandle, audio: AudioBuffer) -> None:
         raise NotImplementedError(

@@ -50,6 +50,7 @@ class WebSocketConnector(BaseConnector):
         self._events: list[AgentEvent] = []
         self._transcript_parts: list[str] = []  # Agent-provided transcripts
         self._json_audio_mode = False
+        self._send_count = 0  # Track send_audio calls for turn counting
 
     async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
         try:
@@ -89,6 +90,7 @@ class WebSocketConnector(BaseConnector):
         self._events.clear()
         self._transcript_parts.clear()
         self._json_audio_mode = False
+        self._send_count = 0
         return handle
 
     async def send_audio(self, handle: ConnectionHandle, audio: AudioBuffer) -> None:
@@ -97,6 +99,8 @@ class WebSocketConnector(BaseConnector):
             raise RuntimeError(msg)
 
         import asyncio
+
+        self._send_count += 1
 
         # Send audio in chunks to simulate real-time streaming
         chunk_size = _DEFAULT_CHUNK_BYTES
@@ -190,9 +194,11 @@ class WebSocketConnector(BaseConnector):
                 logger.debug("WebSocket close error (non-fatal)", exc_info=True)
             self._ws = None
 
-        turn_count = sum(
+        explicit_turns = sum(
             1 for e in self._events if e.type == EventType.TURN_END
         )
+        # Use explicit turn events if available, otherwise count send_audio calls
+        turn_count = explicit_turns if explicit_turns > 0 else self._send_count
 
         return CallSummary(
             duration_ms=duration_ms,

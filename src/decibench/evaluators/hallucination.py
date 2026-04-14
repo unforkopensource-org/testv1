@@ -138,9 +138,8 @@ Respond with JSON: {{"passed": true/false, "score": N, "reasoning": "..."}}"""
     def _entity_grounding_check(transcript: TranscriptResult, grounding: str) -> float:
         """Check if factual entities in agent response appear in grounding context.
 
-        Extracts numbers, dates, times, money amounts, proper nouns from the
-        agent's response and verifies they exist in the grounding. Ignores
-        conversational filler entirely.
+        Extracts entities in priority order (complex → simple) to avoid
+        double-counting. A "$500" match consumes "500" so it isn't counted again.
         """
         if not transcript.text or not grounding:
             return 100.0  # No claims to check
@@ -148,46 +147,71 @@ Respond with JSON: {{"passed": true/false, "score": N, "reasoning": "..."}}"""
         agent_text = transcript.text
         ground_text = grounding.lower()
 
-        # Extract factual entities from agent response
+        # Track character positions already claimed by higher-priority patterns
+        claimed_spans: list[tuple[int, int]] = []
+
+        def _is_claimed(start: int, end: int) -> bool:
+            return any(cs <= start < ce or cs < end <= ce for cs, ce in claimed_spans)
+
+        # Extract entities in priority order: complex patterns first
+        # Each match is (entity_text, start_pos, end_pos)
         entities: list[str] = []
 
-        # Numbers (amounts, quantities, IDs)
-        entities.extend(re.findall(r'\b\d+(?:\.\d+)?\b', agent_text))
+        # Priority 1: Money amounts (most specific)
+        for m in re.finditer(r'\$\d+(?:,\d{3})*(?:\.\d{2})?', agent_text):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
 
-        # Money amounts
-        entities.extend(re.findall(r'\$\d+(?:,\d{3})*(?:\.\d{2})?', agent_text))
+        # Priority 2: Email addresses
+        for m in re.finditer(r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', agent_text):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
 
-        # Times
-        entities.extend(re.findall(r'\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b', agent_text))
+        # Priority 3: Order/reference numbers (ORD-123, REF-456)
+        for m in re.finditer(r'\b[A-Z]{2,5}-\d{3,}\b', agent_text):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
 
-        # Dates
-        entities.extend(re.findall(
+        # Priority 4: Times (2:00 PM)
+        for m in re.finditer(r'\b\d{1,2}:\d{2}\s*(?:AM|PM|am|pm)?\b', agent_text):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
+
+        # Priority 5: Full dates (January 15, etc.)
+        for m in re.finditer(
+            r'\b(?:January|February|March|April|May|June|July|August|'
+            r'September|October|November|December)\s+\d{1,2}\b',
+            agent_text, re.IGNORECASE,
+        ):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
+
+        # Priority 6: Day names
+        for m in re.finditer(
             r'\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b',
-            agent_text, re.IGNORECASE
-        ))
-        entities.extend(re.findall(
-            r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}\b',
-            agent_text, re.IGNORECASE
-        ))
+            agent_text, re.IGNORECASE,
+        ):
+            if not _is_claimed(m.start(), m.end()):
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
 
-        # Email addresses
-        entities.extend(re.findall(r'\b[\w.+-]+@[\w-]+\.[\w.]+\b', agent_text))
-
-        # Order/reference numbers (ORD-123, REF-456, etc.)
-        entities.extend(re.findall(r'\b[A-Z]{2,5}-\d{3,}\b', agent_text))
+        # Priority 7: Numbers (only if not already captured by a higher pattern)
+        # Exclude trivial/non-factual numbers
+        _trivial_numbers = {"0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "100"}
+        for m in re.finditer(r'\b\d+(?:\.\d+)?\b', agent_text):
+            if not _is_claimed(m.start(), m.end()) and m.group() not in _trivial_numbers:
+                entities.append(m.group())
+                claimed_spans.append((m.start(), m.end()))
 
         if not entities:
-            return 100.0  # No factual claims found — just conversation
+            return 100.0  # No factual claims found
 
         # Check each entity against grounding
-        grounded = 0
-        for entity in entities:
-            if entity.lower() in ground_text:
-                grounded += 1
+        grounded = sum(1 for entity in entities if entity.lower() in ground_text)
 
-        # If we only found trivial numbers (1, 2, etc.), don't penalize
-        non_trivial = [e for e in entities if len(e) > 2 or not e.isdigit()]
-        if not non_trivial:
-            return 100.0
-
-        return (grounded / len(entities)) * 100 if entities else 100.0
+        return (grounded / len(entities)) * 100

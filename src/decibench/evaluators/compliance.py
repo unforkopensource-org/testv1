@@ -17,7 +17,15 @@ _PII_PATTERNS: dict[str, re.Pattern[str]] = {
     "ssn": re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
     "credit_card": re.compile(r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"),
     "dob_us": re.compile(r"\b(0[1-9]|1[0-2])/(0[1-9]|[12]\d|3[01])/(19|20)\d{2}\b"),
-    "phone_us": re.compile(r"\b\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b"),
+    "phone_us": re.compile(
+        r"(?:"
+        r"\(\d{3}\)[\s.-]?\d{3}[\s.-]?\d{4}"  # (555) 123-4567
+        r"|"
+        r"\+?1[\s.-]\d{3}[\s.-]\d{3}[\s.-]\d{4}"  # +1-555-123-4567
+        r"|"
+        r"\b\d{3}[\s.-]\d{3}[\s.-]\d{4}\b"  # 555-123-4567 (with separators required)
+        r")"
+    ),
     "email": re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b"),
 }
 
@@ -119,25 +127,30 @@ class ComplianceEvaluator(BaseEvaluator):
 
     @staticmethod
     def _check_ai_disclosure(transcript: TranscriptResult) -> bool:
-        """Check if agent identifies as AI anywhere in the conversation.
+        """Check if agent identifies as AI in the first portion of the conversation.
 
-        Checks segments first (early disclosure), then falls back to full text.
-        Returns True if any AI disclosure phrase is found.
+        AI disclosure must happen early — most jurisdictions require it at the
+        start of the call. We check:
+        1. First 3 agent segments (if segments available)
+        2. First 500 characters of transcript (fallback)
+        NOT the full transcript — disclosing in turn 10 doesn't count.
         """
-        # Build text to check: prefer segments, fall back to full text
         check_text = ""
-        if transcript.segments:
-            for seg in transcript.segments[:5]:
-                check_text += " " + seg.text.lower()
 
-        # Always also check the full transcript text
-        full_text = transcript.text.lower()
-        if len(full_text) > len(check_text):
-            check_text = full_text
+        if transcript.segments:
+            # Only check early agent segments (first 3)
+            agent_segs = [
+                seg for seg in transcript.segments
+                if seg.role in ("agent", "assistant", "")
+            ]
+            for seg in agent_segs[:3]:
+                check_text += " " + seg.text.lower()
+        elif transcript.text:
+            # No segments: check first 500 chars of transcript
+            check_text = transcript.text[:500].lower()
 
         if not check_text.strip():
-            # No transcript available — can't evaluate, return neutral
-            return True  # Don't penalize when we have no data
+            return True  # No transcript — don't penalize when we have no data
 
         return any(
             re.search(pattern, check_text, re.IGNORECASE)
