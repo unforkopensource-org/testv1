@@ -1,0 +1,26 @@
+id: standard-interruption-014
+version: 1
+mode: scripted
+description: Caller interruption handling (barge-in)
+tags: [interruption, robustness, standard]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.3
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "Tell me about your return policy"
+  - role: agent
+    expect:
+      intent: return_policy
+  - role: caller
+    text: "Wait, actually I just need to know the deadline"
+  - role: agent
+    expect:
+      intent: return_deadline
+
+success_criteria:
+  - type: task_completion
+    description: "Agent adapts to interruption"

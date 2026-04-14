@@ -1,0 +1,22 @@
+id: acoustic-slow-002
+version: 1
+mode: scripted
+description: Very slow speaker pacing
+tags: [robustness, speed, acoustic]
+
+persona:
+  accent: en-US
+  speaking_speed: 0.7
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I would like to speak with someone about my insurance claim"
+  - role: agent
+    expect:
+      intent: insurance_claim
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent handles slow speech without timing out"

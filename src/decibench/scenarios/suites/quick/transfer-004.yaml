@@ -1,0 +1,26 @@
+id: quick-transfer-004
+version: 1
+mode: scripted
+description: Call transfer request handling
+tags: [transfer, routing, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "Can I speak with a real person please?"
+  - role: agent
+    expect:
+      intent: transfer_request
+      must_include: ["transfer", "connect"]
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent acknowledges transfer request"
+  - type: compliance
+    description: "Agent handles transfer gracefully"
+    check: deterministic

@@ -1,0 +1,23 @@
+id: quick-farewell-009
+version: 1
+mode: scripted
+description: Graceful conversation ending
+tags: [conversation, farewell, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "That's all I needed, thank you so much!"
+  - role: agent
+    expect:
+      intent: farewell
+      must_include: ["welcome", "goodbye"]
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent ends conversation gracefully"

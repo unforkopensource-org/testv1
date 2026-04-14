@@ -1,0 +1,22 @@
+id: quick-error-010
+version: 1
+mode: scripted
+description: Out-of-scope request handling
+tags: [conversation, error_handling, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "Can you check my bank account balance?"
+  - role: agent
+    expect:
+      intent: out_of_scope
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent politely declines out-of-scope request"

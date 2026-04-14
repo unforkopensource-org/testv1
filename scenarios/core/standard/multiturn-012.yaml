@@ -1,0 +1,36 @@
+id: standard-multiturn-012
+version: 1
+mode: scripted
+description: Multi-turn conversation with context retention
+tags: [conversation, context, standard]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I'm looking for a flight from New York to London"
+  - role: agent
+    expect:
+      intent: flight_search
+      must_ask: [travel_date]
+  - role: caller
+    text: "Departing March 15th, returning March 22nd"
+  - role: agent
+    expect:
+      must_extract:
+        departure: "march 15"
+        return: "march 22"
+  - role: caller
+    text: "Actually make it the 16th instead"
+  - role: agent
+    expect:
+      intent: modify_request
+      must_extract:
+        departure: "march 16"
+
+success_criteria:
+  - type: task_completion
+    description: "Agent tracks context across turns"

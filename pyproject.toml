@@ -1,0 +1,127 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "decibench"
+version = "1.0.0"
+description = "The open standard for voice agent quality. Free, transparent, reproducible."
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+authors = [{ name = "Decibench Contributors" }]
+keywords = ["voice", "agent", "testing", "benchmark", "quality", "audio", "evaluation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Typing :: Typed",
+]
+dependencies = [
+    "click>=8.1",
+    "rich>=13.9",
+    "pydantic>=2.10",
+    "pyyaml>=6.0",
+    "jiwer>=4.0.0",
+    "numpy>=2.1",
+    "soundfile>=0.13",
+    "librosa>=0.10.2",
+    "websockets>=14.1",
+    "httpx>=0.28",
+    "anyio>=4.7",
+]
+
+[project.optional-dependencies]
+tts-edge = ["edge-tts>=7.2.8"]
+stt-whisper = ["faster-whisper>=1.2.1"]
+audio-quality = ["speechmos>=2.3", "onnxruntime>=1.17"]
+mcp = ["mcp>=1.9"]
+server = ["fastapi>=0.115", "uvicorn>=0.34"]
+all = [
+    "decibench[tts-edge,stt-whisper,audio-quality,mcp,server]",
+]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.8",
+    "mypy>=1.14",
+]
+
+[project.scripts]
+decibench = "decibench.cli:main"
+
+[project.urls]
+Homepage = "https://decibench.dev"
+Repository = "https://github.com/decibench/decibench"
+Documentation = "https://decibench.dev/docs"
+Issues = "https://github.com/decibench/decibench/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/decibench"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 110
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "RUF",  # ruff-specific rules
+    "S",    # flake8-bandit (security)
+]
+ignore = [
+    "S101",  # assert usage (ok in tests)
+    "S603",  # subprocess without shell=True check (we handle this)
+    "S607",  # partial executable path (intentional for exec: connector)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["decibench"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+plugins = ["pydantic.mypy"]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
+
+[[tool.mypy.overrides]]
+module = [
+    "edge_tts.*",
+    "faster_whisper.*",
+    "librosa.*",
+    "soundfile.*",
+    "speechmos.*",
+    "jiwer.*",
+    "yaml.*",
+    "onnxruntime.*",
+    "opuslib.*",
+    "scipy.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]

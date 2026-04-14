@@ -1,0 +1,40 @@
+id: quick-booking-002
+version: 1
+mode: scripted
+description: Appointment scheduling — happy path
+tags: [booking, task_completion, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I'd like to schedule an appointment with Dr. Patel"
+  - role: agent
+    expect:
+      intent: schedule_appointment
+      must_ask: [preferred_date]
+      max_latency_ms: 800
+  - role: caller
+    text: "Next Tuesday afternoon please"
+  - role: agent
+    expect:
+      must_include: ["tuesday"]
+      must_extract:
+        date: "tuesday"
+        time_preference: "afternoon"
+
+tool_mocks:
+  - name: check_availability
+    when_called_with:
+      doctor: "Dr. Patel"
+    returns:
+      slots: ["2:00 PM", "3:30 PM"]
+
+success_criteria:
+  - type: task_completion
+    description: "Appointment slot offered to caller"
+  - type: latency
+    p95_max_ms: 1500

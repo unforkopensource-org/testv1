@@ -1,0 +1,22 @@
+id: quick-clarification-006
+version: 1
+mode: scripted
+description: Ambiguous input requiring clarification
+tags: [conversation, clarification, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "Yeah so the thing with the stuff, you know what I mean?"
+  - role: agent
+    expect:
+      intent: clarification_needed
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent asks for clarification instead of guessing"

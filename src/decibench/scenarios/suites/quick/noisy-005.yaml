@@ -1,0 +1,25 @@
+id: quick-noisy-005
+version: 1
+mode: scripted
+description: Speech comprehension with background noise
+tags: [robustness, noise, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: cafe
+  noise_level_db: 15
+
+conversation:
+  - role: caller
+    text: "Hi, I need to cancel my subscription"
+  - role: agent
+    expect:
+      intent: cancel_subscription
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent understands request despite noise"
+  - type: latency
+    p95_max_ms: 5000

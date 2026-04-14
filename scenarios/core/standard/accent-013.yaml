@@ -1,0 +1,22 @@
+id: standard-accent-013
+version: 1
+mode: scripted
+description: British English accent comprehension
+tags: [robustness, accent, standard]
+
+persona:
+  accent: en-GB
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I'd like to book a table for dinner this Saturday evening"
+  - role: agent
+    expect:
+      intent: reservation
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent understands British accent"

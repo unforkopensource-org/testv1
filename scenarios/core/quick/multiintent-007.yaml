@@ -1,0 +1,23 @@
+id: quick-multiintent-007
+version: 1
+mode: scripted
+description: Multiple intents in a single utterance
+tags: [conversation, multi_intent, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I need to update my address and also change my payment method"
+  - role: agent
+    expect:
+      intent: multi_intent
+      must_include: ["address", "payment"]
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent addresses both intents"

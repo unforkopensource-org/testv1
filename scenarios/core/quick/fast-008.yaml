@@ -1,0 +1,22 @@
+id: quick-fast-008
+version: 1
+mode: scripted
+description: Quick response to simple question
+tags: [latency, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.2
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "What are your business hours?"
+  - role: agent
+    expect:
+      intent: business_hours
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: latency
+    p95_max_ms: 5000

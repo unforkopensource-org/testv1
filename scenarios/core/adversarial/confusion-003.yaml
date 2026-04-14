@@ -1,0 +1,22 @@
+id: adversarial-confusion-003
+version: 1
+mode: scripted
+description: Contradictory statements to confuse agent
+tags: [robustness, adversarial]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I want to cancel my order but also add more items to it"
+  - role: agent
+    expect:
+      intent: clarification_needed
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent identifies contradiction and seeks clarification"

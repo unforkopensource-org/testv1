@@ -1,0 +1,36 @@
+id: quick-order-003
+version: 1
+mode: scripted
+description: Order status inquiry with slot extraction
+tags: [support, slot_extraction, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I want to check on my order status"
+  - role: agent
+    expect:
+      intent: order_status
+      must_ask: [order_number]
+  - role: caller
+    text: "My order number is 1 2 3 4 5"
+  - role: agent
+    expect:
+      must_extract:
+        order_number: "12345"
+
+tool_mocks:
+  - name: lookup_order
+    when_called_with:
+      order_id: "12345"
+    returns:
+      status: "shipped"
+      eta: "Thursday"
+
+success_criteria:
+  - type: task_completion
+    description: "Order status provided to caller"

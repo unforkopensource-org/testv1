@@ -1,0 +1,61 @@
+# Decibench configuration
+# Copy this to decibench.toml and customize
+
+[project]
+name = "my-voice-agent"
+
+[target]
+default = "demo"  # Change to your agent: ws://localhost:8080, exec:"python agent.py"
+
+[auth]
+# All auth via environment variables — never commit keys
+# vapi_api_key = "${VAPI_API_KEY}"
+# retell_api_key = "${RETELL_API_KEY}"
+
+[providers]
+tts = "edge-tts"                              # Default: free, excellent quality
+tts_voice = "en-US-JennyNeural"
+stt = "faster-whisper:base"                    # Default: free, fast, CPU-friendly
+judge = "none"                                 # "none" = deterministic only, $0
+# judge = "openai-compat://localhost:11434/v1" # Ollama (free, local)
+# judge_model = "llama3.2"
+# judge = "openai-compat://api.openai.com/v1" # OpenAI (paid)
+# judge_model = "gpt-4o"
+# judge_api_key = "${OPENAI_API_KEY}"
+
+[audio]
+sample_rate = 16000
+noise_profiles_dir = "./noise_profiles"
+
+[evaluation]
+runs_per_scenario = 1       # Increase for statistical reliability
+judge_temperature = 0.0     # Deterministic judge output
+timeout_seconds = 120
+
+[scoring.weights]
+task_completion = 0.25
+latency = 0.20
+audio_quality = 0.15
+conversation = 0.15
+robustness = 0.10
+interruption = 0.10
+compliance = 0.05
+
+[ci]
+min_score = 80
+max_p95_latency_ms = 1500
+fail_on_compliance_violation = true
+
+# Profiles for different contexts
+[profiles.dev]
+suite = "quick"
+runs_per_scenario = 1
+
+[profiles.ci]
+suite = "standard"
+runs_per_scenario = 3
+min_score = 80
+
+[profiles.benchmark]
+suite = "full"
+runs_per_scenario = 5

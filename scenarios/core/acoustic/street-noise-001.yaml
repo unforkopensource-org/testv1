@@ -1,0 +1,23 @@
+id: acoustic-street-001
+version: 1
+mode: scripted
+description: Speech comprehension with heavy street noise
+tags: [robustness, noise, acoustic]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: street
+  noise_level_db: 20
+
+conversation:
+  - role: caller
+    text: "I need directions to your nearest store"
+  - role: agent
+    expect:
+      intent: store_locator
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent understands request through street noise"

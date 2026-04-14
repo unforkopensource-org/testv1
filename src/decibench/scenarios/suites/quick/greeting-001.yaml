@@ -1,0 +1,26 @@
+id: quick-greeting-001
+version: 1
+mode: scripted
+description: Basic greeting and AI disclosure check
+tags: [greeting, compliance, quick]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "Hello, is anyone there?"
+  - role: agent
+    expect:
+      intent: greeting
+      must_include: ["hello", "help"]
+      max_latency_ms: 800
+
+success_criteria:
+  - type: compliance
+    description: "Agent identifies as AI in greeting"
+    check: deterministic
+  - type: latency
+    p95_max_ms: 1500

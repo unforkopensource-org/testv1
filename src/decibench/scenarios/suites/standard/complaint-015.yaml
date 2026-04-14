@@ -1,0 +1,22 @@
+id: standard-complaint-015
+version: 1
+mode: scripted
+description: Handling an upset caller with empathy
+tags: [conversation, sentiment, standard]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.1
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "This is ridiculous, I've been waiting for my refund for three weeks!"
+  - role: agent
+    expect:
+      intent: complaint
+      max_latency_ms: 5000
+
+success_criteria:
+  - type: task_completion
+    description: "Agent responds with empathy and offers resolution"

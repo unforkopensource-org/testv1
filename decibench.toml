@@ -1,0 +1,52 @@
+# Decibench configuration — customize for your voice agent
+
+[project]
+name = "my-voice-agent"
+
+[target]
+default = "ws://localhost:8000/ws"
+
+[auth]
+# All auth via environment variables — never commit keys
+# vapi_api_key = "${VAPI_API_KEY}"
+# retell_api_key = "${RETELL_API_KEY}"
+
+[providers]
+tts = "edge-tts"                              # Free, excellent quality
+tts_voice = "en-US-JennyNeural"
+stt = "faster-whisper:base"                    # Free, fast, CPU-friendly
+judge = "none"                                    # Default: deterministic-only (no API key needed)
+# judge = "openai-compat"                        # Uncomment for LLM judge (needs OPENAI_API_KEY)
+# judge_model = "gpt-4o-mini"
+
+[audio]
+sample_rate = 16000
+noise_profiles_dir = "./noise_profiles"
+
+[evaluation]
+runs_per_scenario = 1
+judge_temperature = 0.0
+timeout_seconds = 120
+
+[scoring.weights]
+task_completion = 0.25
+latency = 0.20
+audio_quality = 0.15
+conversation = 0.15
+robustness = 0.10
+interruption = 0.10
+compliance = 0.05
+
+[ci]
+min_score = 60
+max_p95_latency_ms = 1500
+fail_on_compliance_violation = true
+
+[profiles.dev]
+suite = "quick"
+runs_per_scenario = 1
+
+[profiles.ci]
+suite = "standard"
+runs_per_scenario = 3
+min_score = 80

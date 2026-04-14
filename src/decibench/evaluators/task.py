@@ -1,0 +1,194 @@
+"""Task completion evaluator — did the agent achieve the caller's goal?
+
+Uses a combination of deterministic checks (tool calls, slot extraction)
+and LLM judge (semantic goal achievement) when available.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from decibench.evaluators.base import BaseEvaluator
+from decibench.models import (
+    CallSummary,
+    EventType,
+    MetricResult,
+    Scenario,
+    TranscriptResult,
+)
+
+
+class TaskCompletionEvaluator(BaseEvaluator):
+    """Evaluate whether the agent completed the caller's task."""
+
+    @property
+    def name(self) -> str:
+        return "task_completion"
+
+    @property
+    def requires_judge(self) -> bool:
+        return True  # Best results with LLM judge, but can do partial deterministic
+
+    async def evaluate(
+        self,
+        scenario: Scenario,
+        summary: CallSummary,
+        transcript: TranscriptResult,
+        context: dict[str, Any],
+    ) -> list[MetricResult]:
+        results: list[MetricResult] = []
+
+        # --- Deterministic: check tool calls match expectations ---
+        tool_score = self._check_tool_calls(scenario, summary)
+        results.append(MetricResult(
+            name="tool_call_correctness",
+            value=round(tool_score, 1),
+            unit="%",
+            passed=tool_score >= 95.0,
+            threshold=95.0,
+        ))
+
+        # --- Deterministic: slot extraction accuracy ---
+        slot_score = self._check_slot_extraction(scenario, summary, transcript)
+        if slot_score is not None:
+            results.append(MetricResult(
+                name="slot_extraction_accuracy",
+                value=round(slot_score, 1),
+                unit="%",
+                passed=slot_score >= 90.0,
+                threshold=90.0,
+            ))
+
+        # --- Semantic: LLM judge for goal achievement ---
+        judge = context.get("judge")
+        if judge is not None and transcript.text and transcript.text.strip():
+            judge_result = await self._judge_task_completion(scenario, transcript, judge)
+            results.append(MetricResult(
+                name="task_completion",
+                value=round(judge_result, 1),
+                unit="%",
+                passed=judge_result >= 90.0,
+                threshold=90.0,
+            ))
+        else:
+            # Without judge, derive from deterministic signals
+            deterministic_score = (tool_score + (slot_score or 100)) / 2
+            results.append(MetricResult(
+                name="task_completion",
+                value=round(deterministic_score, 1),
+                unit="%",
+                passed=deterministic_score >= 90.0,
+                threshold=90.0,
+                details={"method": "deterministic_only"},
+            ))
+
+        return results
+
+    @staticmethod
+    def _check_tool_calls(scenario: Scenario, summary: CallSummary) -> float:
+        """Check if the right tools were called with the right parameters."""
+        if not scenario.tool_mocks:
+            return 100.0  # No tools expected, so no failures
+
+        expected_tools = {mock.name: mock for mock in scenario.tool_mocks}
+        actual_calls = [
+            e.data for e in summary.events
+            if e.type == EventType.TOOL_CALL
+        ]
+
+        if not expected_tools:
+            return 100.0
+
+        correct = 0
+        total = len(expected_tools)
+
+        for tool_name, mock in expected_tools.items():
+            # Check if the tool was called
+            matching = [c for c in actual_calls if c.get("name") == tool_name]
+            if not matching:
+                continue
+
+            call = matching[0]
+            # Check parameters
+            if mock.when_called_with:
+                call_args = call.get("args", call.get("arguments", {}))
+                params_match = all(
+                    str(call_args.get(k, "")).lower() == str(v).lower()
+                    for k, v in mock.when_called_with.items()
+                )
+                if params_match:
+                    correct += 1
+            else:
+                correct += 1  # Tool called, no specific params expected
+
+        return (correct / total) * 100 if total > 0 else 100.0
+
+    @staticmethod
+    def _check_slot_extraction(
+        scenario: Scenario,
+        summary: CallSummary,
+        transcript: TranscriptResult,
+    ) -> float | None:
+        """Check if the agent extracted the right values from caller speech."""
+        expected_slots: dict[str, str] = {}
+        for turn in scenario.conversation:
+            if turn.role == "agent" and turn.expect and turn.expect.must_extract:
+                expected_slots.update(turn.expect.must_extract)
+
+        if not expected_slots:
+            return None
+
+        agent_text = transcript.text.lower()
+        correct = 0
+        for _slot_name, expected_value in expected_slots.items():
+            if expected_value.lower() in agent_text:
+                correct += 1
+
+        return (correct / len(expected_slots)) * 100
+
+    @staticmethod
+    async def _judge_task_completion(
+        scenario: Scenario,
+        transcript: TranscriptResult,
+        judge: Any,
+    ) -> float:
+        """Use LLM judge to evaluate goal achievement."""
+        goal = scenario.goal or "Complete the task described in the scenario"
+        criteria = [c.description or c.type for c in scenario.success_criteria]
+
+        criteria_text = (
+            chr(10).join(f'- {c}' for c in criteria)
+            if criteria
+            else 'Task was completed successfully'
+        )
+
+        prompt = f"""Evaluate whether the voice agent successfully completed the caller's task.
+
+## Caller's Goal
+{goal}
+
+## Success Criteria
+{criteria_text}
+
+## Agent's Response
+{transcript.text}
+
+## Instructions
+1. For EACH success criterion above, determine: was it MET, PARTIALLY MET, or NOT MET?
+2. Cite specific evidence from the agent's response for each judgment
+3. Conversational filler (greetings, closings) does not count for or against
+
+## Scoring
+- 100 = All criteria fully met with correct information
+- 75 = Most criteria met, minor omissions
+- 50 = Some criteria met, significant gaps
+- 25 = Few criteria met, major task failure
+- 0 = No criteria met, complete failure
+
+Respond with JSON: {{"passed": true/false, "score": N, "reasoning": "criterion-by-criterion assessment"}}"""
+
+        result = await judge.evaluate(prompt, {
+            "transcript": transcript.text,
+            "expected": goal,
+        })
+        return float(result.score)

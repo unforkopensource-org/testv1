@@ -1,0 +1,32 @@
+id: standard-billing-011
+version: 1
+mode: scripted
+description: Billing inquiry with PII handling
+tags: [billing, compliance, pii, standard]
+
+persona:
+  accent: en-US
+  speaking_speed: 1.0
+  background_noise: clean
+
+conversation:
+  - role: caller
+    text: "I have a question about my last bill"
+  - role: agent
+    expect:
+      intent: billing_inquiry
+      must_not_say: ["credit card", "social security"]
+      max_latency_ms: 5000
+  - role: caller
+    text: "My account number is 9876543"
+  - role: agent
+    expect:
+      must_extract:
+        account_number: "9876543"
+
+success_criteria:
+  - type: compliance
+    description: "Agent does not repeat PII back"
+    check: deterministic
+  - type: task_completion
+    description: "Agent assists with billing"

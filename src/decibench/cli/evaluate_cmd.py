@@ -1,0 +1,83 @@
+"""decibench evaluate-calls — Grade imported production calls."""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+
+import click
+from rich.console import Console
+from rich.table import Table
+
+from decibench.config import load_config
+from decibench.evaluators.compliance import ComplianceEvaluator
+from decibench.evaluators.hallucination import HallucinationEvaluator
+from decibench.evaluators.task import TaskCompletionEvaluator
+from decibench.providers.registry import get_judge
+from decibench.replay.evaluate import ImportedCallEvaluator
+from decibench.store.sqlite import RunStore
+
+
+@click.command("evaluate-calls")
+@click.option("--limit", default=10, help="Number of traces to evaluate.")
+@click.option("--failed-only", is_flag=True, help="Only show traces that failed evaluation.")
+def evaluate_calls_cmd(limit: int, failed_only: bool) -> None:
+    """Evaluate imported production calls and grade them."""
+    console = Console()
+    store = RunStore()
+    config = load_config(Path("decibench.toml"))
+
+    traces_meta = store.list_call_traces(limit=limit)
+    if not traces_meta:
+        console.print("[yellow]No imported call traces found.[/yellow]")
+        return
+
+    console.print(f"[bold cyan]Evaluating {len(traces_meta)} imported traces...[/bold cyan]")
+
+    judge = get_judge(config.providers.judge_model) if config.has_judge else None
+
+    # We load transcript-only compatible evaluators for now.
+    evaluators = [
+        ComplianceEvaluator(),
+        HallucinationEvaluator(),
+        TaskCompletionEvaluator()
+    ]
+
+    eval_service = ImportedCallEvaluator(evaluators, config, judge=judge)
+
+    # Run evaluations
+    async def _run() -> None:
+        table = Table(title="Imported Call Evaluations", title_style="bold magenta")
+        table.add_column("Call ID", style="cyan")
+        table.add_column("Score", justify="right")
+        table.add_column("Pass/Fail", justify="center")
+        table.add_column("Failures", style="red")
+
+        for meta in traces_meta:
+            trace = store.get_call_trace(meta["id"])
+            if not trace:
+                continue
+
+            eval_result = await eval_service.evaluate_trace(trace)
+
+            if failed_only and eval_result.passed:
+                continue
+
+            status = "[green]PASS[/green]" if eval_result.passed else "[red]FAIL[/red]"
+            color = "green" if eval_result.passed else "red"
+
+            # Format failures string
+            fail_str = ", ".join(eval_result.failure_summary) if eval_result.failure_summary else ""
+            if not fail_str and eval_result.failures:
+                fail_str = "other"
+
+            table.add_row(
+                trace.id[:12],
+                f"[{color}]{eval_result.score:.1f}[/{color}]",
+                status,
+                fail_str
+            )
+
+        console.print(table)
+
+    asyncio.run(_run())
