@@ -41,16 +41,16 @@ The detailed shipped/beta/experimental matrix lives in
 
 ## Install
 
-### Recommended
-
-```bash
-pipx install decibench
-```
-
-### From GitHub while the package is still moving fast
+### Recommended right now
 
 ```bash
 pipx install git+https://github.com/unforkopensource-org/testv1.git
+```
+
+### Direct with pip
+
+```bash
+python -m pip install git+https://github.com/unforkopensource-org/testv1.git
 ```
 
 If you prefer a project virtualenv:
@@ -59,6 +59,24 @@ If you prefer a project virtualenv:
 python -m venv .venv
 source .venv/bin/activate
 pip install -e .
+```
+
+### About `pipx install decibench`
+
+If you see:
+
+```text
+ERROR: Could not find a version that satisfies the requirement decibench
+ERROR: No matching distribution found for decibench
+```
+
+that means Decibench is not published on PyPI yet. In that case, install from
+the public GitHub repository with the commands above.
+
+Once a PyPI release exists, this shorter command will work:
+
+```bash
+pipx install decibench
 ```
 
 ## First run: zero keys, zero cost

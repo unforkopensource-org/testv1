@@ -36,6 +36,8 @@ dependencies = [
     "websockets>=14.1",
     "httpx>=0.28",
     "anyio>=4.7",
+    "fastapi>=0.115",
+    "uvicorn>=0.34",
 ]
 
 [project.optional-dependencies]
@@ -59,10 +61,10 @@ dev = [
 decibench = "decibench.cli:main"
 
 [project.urls]
-Homepage = "https://decibench.dev"
-Repository = "https://github.com/decibench/decibench"
-Documentation = "https://decibench.dev/docs"
-Issues = "https://github.com/decibench/decibench/issues"
+Homepage = "https://github.com/unforkopensource-org/testv1"
+Repository = "https://github.com/unforkopensource-org/testv1"
+Documentation = "https://github.com/unforkopensource-org/testv1#readme"
+Issues = "https://github.com/unforkopensource-org/testv1/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/decibench"]
