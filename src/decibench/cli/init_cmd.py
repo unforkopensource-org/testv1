@@ -37,7 +37,7 @@ _TARGET_TEMPLATES = {
 @click.option(
     "--provider",
     type=click.Choice(("none", *supported_providers())),
-    default="",
+    default=None,
     help="Semantic judge provider to configure.",
 )
 @click.option("--model", default="", help="Semantic judge model to configure.")
@@ -51,7 +51,7 @@ def init_cmd(
     force: bool,
     project_name: str,
     target: str,
-    provider: str,
+    provider: str | None,
     model: str,
     no_prompt: bool,
 ) -> None:
@@ -125,7 +125,7 @@ def _prompt_target(no_prompt: bool) -> str:
     return _TARGET_TEMPLATES[options[selection - 1][0]]
 
 
-def _resolve_provider(provider: str, no_prompt: bool) -> str:
+def _resolve_provider(provider: str | None, no_prompt: bool) -> str:
     if provider:
         return normalize_provider(provider) if provider != "none" else "none"
     if no_prompt:

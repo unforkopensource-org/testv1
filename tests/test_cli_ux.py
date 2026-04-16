@@ -35,6 +35,22 @@ def test_init_noninteractive_semantic_config() -> None:
         assert 'judge_model = "gemini-2.5-flash"' in config_text
 
 
+def test_init_interactive_defaults_work() -> None:
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        result = runner.invoke(
+            main,
+            ["init"],
+            input="friend-project\n1\nn\n",
+        )
+
+        assert result.exit_code == 0, result.output
+        config_text = Path("decibench.toml").read_text(encoding="utf-8")
+        assert 'name = "friend-project"' in config_text
+        assert 'default = "demo"' in config_text
+        assert 'judge = "none"' in config_text
+
+
 def test_models_preset_updates_config() -> None:
     runner = CliRunner()
     with runner.isolated_filesystem():
