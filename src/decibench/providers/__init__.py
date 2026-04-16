@@ -1,5 +1,7 @@
 """Provider registry for pluggable TTS, STT, and LLM judge backends."""
 
+import decibench.providers.judge.anthropic
+import decibench.providers.judge.gemini
 import decibench.providers.judge.none
 import decibench.providers.judge.openai_compat
 import decibench.providers.stt.faster_whisper

@@ -22,11 +22,14 @@ def main() -> None:
 
 
 # Import and register all subcommands
+from decibench.cli.auth import auth_cmd  # noqa: E402
+from decibench.cli.bridge import bridge_cmd  # noqa: E402
 from decibench.cli.compare import compare_cmd  # noqa: E402
 from decibench.cli.doctor import doctor_cmd  # noqa: E402
 from decibench.cli.evaluate_cmd import evaluate_calls_cmd  # noqa: E402
 from decibench.cli.import_cmd import import_cmd  # noqa: E402
 from decibench.cli.init_cmd import init_cmd  # noqa: E402
+from decibench.cli.models import models_cmd  # noqa: E402
 from decibench.cli.replay import replay_cmd  # noqa: E402
 from decibench.cli.run import run_cmd  # noqa: E402
 from decibench.cli.runs import runs_cmd  # noqa: E402
@@ -36,9 +39,12 @@ from decibench.cli.version import version_cmd  # noqa: E402
 
 main.add_command(run_cmd, "run")
 main.add_command(compare_cmd, "compare")
+main.add_command(auth_cmd, "auth")
+main.add_command(bridge_cmd, "bridge")
 main.add_command(doctor_cmd, "doctor")
 main.add_command(import_cmd, "import")
 main.add_command(init_cmd, "init")
+main.add_command(models_cmd, "models")
 main.add_command(replay_cmd, "replay")
 main.add_command(runs_cmd, "runs")
 main.add_command(scenario_cmd, "scenario")

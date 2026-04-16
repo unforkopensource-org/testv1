@@ -28,6 +28,7 @@ dependencies = [
     "rich>=13.9",
     "pydantic>=2.10",
     "pyyaml>=6.0",
+    "keyring>=25.6",
     "jiwer>=4.0.0",
     "numpy>=2.1",
     "soundfile>=0.13",
@@ -49,6 +50,7 @@ all = [
 dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.25",
+    "pytest-timeout>=2.4",
     "ruff>=0.8",
     "mypy>=1.14",
 ]
@@ -114,6 +116,7 @@ module = [
     "soundfile.*",
     "speechmos.*",
     "jiwer.*",
+    "keyring.*",
     "yaml.*",
     "onnxruntime.*",
     "opuslib.*",

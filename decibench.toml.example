@@ -1,35 +1,55 @@
-# Decibench configuration
-# Copy this to decibench.toml and customize
+# Decibench local project configuration
 
 [project]
 name = "my-voice-agent"
 
 [target]
-default = "demo"  # Change to your agent: ws://localhost:8080, exec:"python agent.py"
+default = "demo"
 
 [auth]
-# All auth via environment variables — never commit keys
-# vapi_api_key = "${VAPI_API_KEY}"
-# retell_api_key = "${RETELL_API_KEY}"
+# Manage secrets locally with:
+#   decibench auth set openai
+#   decibench auth set anthropic
+#   decibench auth set gemini
+#
+# Environment variable fallback is also supported.
+vapi_api_key = ""
+retell_api_key = ""
+openai_api_key = ""
+anthropic_api_key = ""
+gemini_api_key = ""
 
 [providers]
-tts = "edge-tts"                              # Default: free, excellent quality
+tts = "edge-tts"
 tts_voice = "en-US-JennyNeural"
-stt = "faster-whisper:base"                    # Default: free, fast, CPU-friendly
-judge = "none"                                 # "none" = deterministic only, $0
-# judge = "openai-compat://localhost:11434/v1" # Ollama (free, local)
-# judge_model = "llama3.2"
-# judge = "openai-compat://api.openai.com/v1" # OpenAI (paid)
-# judge_model = "gpt-4o"
-# judge_api_key = "${OPENAI_API_KEY}"
+stt = "faster-whisper:base"
+
+# Deterministic only:
+# judge = "none"
+
+# OpenAI:
+# judge = "openai-compat"
+# judge_model = "gpt-5-mini"
+
+# Anthropic:
+# judge = "anthropic"
+# judge_model = "claude-sonnet-4-20250514"
+
+# Gemini:
+# judge = "gemini"
+# judge_model = "gemini-2.5-flash"
+
+judge = "none"
+judge_model = ""
+judge_api_key = ""
 
 [audio]
 sample_rate = 16000
 noise_profiles_dir = "./noise_profiles"
 
 [evaluation]
-runs_per_scenario = 1       # Increase for statistical reliability
-judge_temperature = 0.0     # Deterministic judge output
+runs_per_scenario = 1
+judge_temperature = 0.0
 timeout_seconds = 120
 
 [scoring.weights]
@@ -46,7 +66,6 @@ min_score = 80
 max_p95_latency_ms = 1500
 fail_on_compliance_violation = true
 
-# Profiles for different contexts
 [profiles.dev]
 suite = "quick"
 runs_per_scenario = 1
@@ -55,7 +74,3 @@ runs_per_scenario = 1
 suite = "standard"
 runs_per_scenario = 3
 min_score = 80
-
-[profiles.benchmark]
-suite = "full"
-runs_per_scenario = 5

@@ -18,6 +18,8 @@ def test_default_config():
     assert config.providers.tts == "edge-tts"
     assert config.providers.stt == "faster-whisper:base"
     assert config.providers.judge == "none"
+    assert config.auth.anthropic_api_key == ""
+    assert config.auth.gemini_api_key == ""
     assert not config.has_judge
 
 
@@ -99,6 +101,17 @@ vapi_api_key = "${TEST_DECIBENCH_KEY}"
         assert config.auth.vapi_api_key == "test-secret-123"
     finally:
         del os.environ["TEST_DECIBENCH_KEY"]
+
+
+def test_judge_api_key_inferred_from_auth():
+    config = DecibenchConfig.model_validate({
+        "auth": {"anthropic_api_key": "anthropic-secret"},
+        "providers": {
+            "judge": "anthropic",
+            "judge_model": "claude-sonnet-4-20250514",
+        },
+    })
+    assert config.providers.judge_api_key == "anthropic-secret"
 
 
 def test_profile_application():
