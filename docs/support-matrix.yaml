@@ -1,0 +1,198 @@
+# Decibench Support Matrix — single source of truth
+#
+# Status legend (per plan.md Track 3 truth model):
+#   shipped       — code exists, works end to end, covered by tests/release smoke
+#   beta          — usable but with known limits, documented
+#   experimental  — code exists but should not be sold as reliable
+#   planned       — not shipped yet
+#
+# When you change a connector/importer/UI status here, update README + /docs to
+# match. CI's docs-validation step uses this file as the canonical answer.
+
+version: 2
+updated: "2026-04-16"
+
+connectors:
+  demo:
+    target_uri: demo://
+    status: shipped
+    notes: "Built-in echo agent. Zero config, used for the 30-second quickstart."
+  websocket:
+    target_uri: ws://host:port/path
+    status: shipped
+    notes: "Generic WebSocket connector for any agent that speaks PCM16 over WS."
+  process:
+    target_uri: 'exec:"command"'
+    status: shipped
+    notes: "Spawn a local process; pipe PCM via stdin/stdout."
+  http:
+    target_uri: http://host/endpoint
+    status: shipped
+    notes: "Batch / non-realtime agents."
+  retell:
+    target_uri: retell://agent_id
+    status: experimental
+    notes: >-
+      Native Retell connector requires WebRTC media bridging via the
+      Decibench Bridge sidecar. The protocol contract is shipped, but the
+      end-to-end browser bridge is in progress. Use ws:// for a real
+      Retell WebSocket endpoint until this lands.
+  vapi:
+    target_uri: vapi://agent_id
+    status: experimental
+    notes: >-
+      Same as Retell — Vapi web calls run on Daily.co WebRTC and need the
+      sidecar bridge. Use ws:// for raw Vapi WebSocket endpoints today.
+  livekit:
+    status: planned
+    notes: "Planned. Will build on the same sidecar bridge."
+  elevenlabs:
+    status: planned
+  bland:
+    status: planned
+  sip:
+    status: planned
+    notes: "PSTN/SIP infrastructure is intentionally BYO Twilio/Vonage."
+  pstn:
+    status: planned
+    notes: "BYO Twilio/Vonage credentials path planned."
+
+importers:
+  jsonl:
+    status: shipped
+    notes: "Generic JSONL importer for production calls."
+  vapi:
+    status: shipped
+    notes: "Vapi end-of-call-report importer."
+  retell:
+    status: shipped
+    notes: "Retell call-log importer."
+
+evaluators:
+  wer:
+    status: shipped
+  cer:
+    status: shipped
+    notes: "Auto-selected for CJK languages."
+  latency:
+    status: shipped
+  mos:
+    status: shipped
+    notes: "Real DNSMOS via speechmos extra; heuristic fallback is clearly labeled."
+  task_completion:
+    status: shipped
+  hallucination:
+    status: shipped
+  compliance:
+    status: shipped
+  interruption:
+    status: shipped
+  silence:
+    status: shipped
+  stoi:
+    status: shipped
+  score:
+    status: shipped
+
+audio_engine:
+  tts_edge:
+    status: shipped
+  tts_piper:
+    status: planned
+  tts_coqui:
+    status: planned
+  tts_openai_compat:
+    status: shipped
+  stt_faster_whisper:
+    status: shipped
+  stt_openai_whisper:
+    status: shipped
+  stt_openai_compat:
+    status: shipped
+
+llm_judge:
+  none:
+    status: shipped
+    notes: "Deterministic + statistical metrics only — zero dependencies."
+  openai_compat:
+    status: shipped
+    notes: "One adapter covers Ollama, vLLM, LM Studio, OpenAI, Groq, Together, OpenRouter, Fireworks."
+
+storage:
+  sqlite_local:
+    status: shipped
+  schema_migrations:
+    status: shipped
+  privacy_redaction:
+    status: shipped
+    notes: "Phone, email, and Luhn-validated card redaction."
+
+cli:
+  run:
+    status: shipped
+  import:
+    status: shipped
+  evaluate:
+    status: shipped
+  replay:
+    status: shipped
+  runs:
+    status: shipped
+  serve:
+    status: shipped
+  compare:
+    status: beta
+    notes: "Side-by-side compare works for any two targets that work standalone."
+  scenario_generate:
+    status: shipped
+  red_team:
+    status: planned
+    notes: "Adversarial suite docs/copy exist; first-class red-team CLI is planned."
+  mcp_serve:
+    status: planned
+
+api:
+  read_only_runs:
+    status: shipped
+  read_only_calls:
+    status: shipped
+  call_evaluation:
+    status: shipped
+  call_evaluations_list:
+    status: shipped
+    notes: "Filters: failed_only, source, category, max_score, q (search), call_id, since."
+  scenario_generation_endpoint:
+    status: shipped
+    notes: "GET /calls/{id}/scenario (YAML) and POST /calls/{id}/regression (structured)."
+  call_timeline_endpoint:
+    status: shipped
+    notes: "GET /calls/{id}/timeline — span/turn data for the dashboard chart."
+  failure_inbox_stats_endpoint:
+    status: shipped
+    notes: "GET /failure-inbox/stats — aggregate counters for the workbench header."
+
+dashboard:
+  failure_workbench:
+    status: shipped
+    notes: >-
+      Vue 3 + TypeScript + Vite + Tailwind + Vue Router + TanStack Query +
+      Apache ECharts. Failure inbox is the landing screen; call detail
+      surfaces transcript + spans + metrics + regression action; evaluation
+      detail surfaces metric breakdown + failure list. Source lives in
+      dashboard/, builds into src/decibench/api/static/, and is served by
+      `decibench serve` with no Node required at install time.
+
+distribution:
+  python_package:
+    status: shipped
+  github_release:
+    status: planned
+  homebrew:
+    status: planned
+  docker_image:
+    status: planned
+
+leaderboard:
+  public_leaderboard:
+    status: planned
+    notes: "Targeted for v1.1 — submission tooling is intentionally not in v1.0."

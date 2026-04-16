@@ -1,67 +1,36 @@
-"""Vapi connector — connect to live Vapi agents.
+"""Vapi native connector.
 
-Note: Native Vapi web calls use Daily.co WebRTC under the hood.
-This connector initiates the web call via HTTP, but full audio media bridging
-requires a WebRTC stack wrapper not currently bundled in v1.0.
+Same architecture as the Retell connector — a thin wrapper around
+`BridgeConnector` that delegates the actual browser-SDK work to the
+`decibench-bridge` Node sidecar.
+
+Status: **Experimental**. Use the generic `ws://` connector for raw Vapi
+WebSocket endpoints until the sidecar's Vapi adapter has a green gated
+integration test.
 """
 
 from __future__ import annotations
 
-import logging
-import time
-from typing import TYPE_CHECKING, Any
+import os
+from typing import Any
 
-from decibench.connectors.base import BaseConnector
+from decibench.connectors._bridge_base import BridgeConnector
 from decibench.connectors.registry import register_connector
-from decibench.models import (
-    AgentEvent,
-    AudioBuffer,
-    CallSummary,
-    ConnectionHandle,
-    EventType,
-)
 
-if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
-logger = logging.getLogger(__name__)
 
 @register_connector("vapi")
-class VapiConnector(BaseConnector):
-    """Connect to a Vapi agent."""
+class VapiConnector(BridgeConnector):
+    """Connect to a native Vapi agent via the Decibench bridge sidecar."""
 
-    def __init__(self, **kwargs: Any) -> None:
-        self._call_id: str | None = None
-        self._web_call_url: str | None = None
+    platform_name = "vapi"
+    target_uri_prefix = "vapi://"
 
-    async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
-        # Fail fast: audio streaming is not yet implemented.
-        # Raising here prevents initiating a billable API call that would
-        # immediately crash on send_audio/receive_events anyway.
-        msg = (
-            "Vapi connector requires WebRTC media bridging (Daily.co) which is not yet "
-            "implemented in Decibench v1.0. Use the generic WebSocket connector with your "
-            "Vapi agent's WebSocket endpoint, or the demo connector for testing.\n"
-            "Track progress: https://github.com/decibench/decibench/issues"
+    def extract_credentials(self, target: str, config: dict[str, Any]) -> dict[str, Any]:
+        # The Vapi Web SDK takes a public_key (web key), not the server API key.
+        public_key = (
+            config.get("vapi_public_key")
+            or config.get("vapi_api_key")  # accept either name for convenience
+            or os.environ.get("VAPI_PUBLIC_KEY")
+            or os.environ.get("VAPI_API_KEY", "")
         )
-        raise NotImplementedError(msg)
-
-    async def send_audio(self, handle: ConnectionHandle, audio: AudioBuffer) -> None:
-        raise NotImplementedError(
-            "Full WebRTC media bridging (Daily.co) for Vapi is required to stream raw audio. "
-            "Please use the PSTN connector or the generic WebRTC bridge module."
-        )
-
-    async def receive_events(self, handle: ConnectionHandle) -> AsyncIterator[AgentEvent]:
-        raise NotImplementedError("Requires WebRTC streaming.")
-        if False:  # pragma: no cover
-            yield AgentEvent(type=EventType.METADATA, timestamp_ms=0.0, data={})
-
-    async def disconnect(self, handle: ConnectionHandle) -> CallSummary:
-        return CallSummary(
-            duration_ms=(time.monotonic_ns() - handle.start_time_ns) / 1_000_000,
-            turn_count=0,
-            agent_audio=b"",
-            events=[],
-            platform_metadata={"vapi_call_id": self._call_id}
-        )
+        return {"public_key": public_key} if public_key else {}

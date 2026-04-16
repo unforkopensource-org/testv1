@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+  body {
+    font-family: theme('fontFamily.sans');
+    @apply antialiased;
+  }
+  code,
+  pre {
+    font-family: theme('fontFamily.mono');
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-ink-200 bg-white shadow-sm;
+  }
+  .pill {
+    @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium;
+  }
+  .pill-pass {
+    @apply pill bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100;
+  }
+  .pill-fail {
+    @apply pill bg-rose-50 text-rose-700 ring-1 ring-rose-100;
+  }
+  .pill-info {
+    @apply pill bg-indigo-50 text-indigo-700 ring-1 ring-indigo-100;
+  }
+  .pill-muted {
+    @apply pill bg-ink-100 text-ink-700;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition;
+  }
+  .btn-primary {
+    @apply btn bg-ink-900 text-white hover:bg-ink-800;
+  }
+  .btn-ghost {
+    @apply btn bg-white text-ink-700 ring-1 ring-ink-200 hover:bg-ink-50;
+  }
+  .input {
+    @apply w-full rounded-lg border border-ink-200 bg-white px-3 py-2 text-sm focus:border-ink-400 focus:outline-none focus:ring-2 focus:ring-ink-200;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-ink-500;
+  }
+}

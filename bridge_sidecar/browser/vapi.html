@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Decibench Vapi bridge page</title>
+  </head>
+  <body>
+    <script type="module">
+      // Vapi bridge page. Same architecture as retell.html, different SDK.
+      // Returns the call id from decibenchStart so the sidecar can record it
+      // as the session id.
+
+      import Vapi from "https://esm.sh/@vapi-ai/web@2";
+
+      const TARGET_RATE = 16000;
+      let vapi = null;
+      let audioCtx = null;
+      let captureNode = null;
+      let playbackNode = null;
+      let microphoneStream = null;
+
+      async function buildSyntheticMicrophone(sampleRate) {
+        audioCtx = new AudioContext({ sampleRate: 48000 });
+        await audioCtx.audioWorklet.addModule("./audio-shared.js");
+        playbackNode = new AudioWorkletNode(audioCtx, "decibench-playback", {
+          processorOptions: { targetRate: sampleRate },
+        });
+        const dest = audioCtx.createMediaStreamDestination();
+        playbackNode.connect(dest);
+        microphoneStream = dest.stream;
+      }
+
+      function attachAgentCapture(remoteStream, sampleRate) {
+        const src = audioCtx.createMediaStreamSource(remoteStream);
+        captureNode = new AudioWorkletNode(audioCtx, "decibench-capture", {
+          processorOptions: { targetRate: sampleRate },
+        });
+        captureNode.port.onmessage = (e) => {
+          const msg = e.data;
+          if (msg && msg.type === "chunk") {
+            const b64 = bytesToBase64(new Uint8Array(msg.pcm16.buffer));
+            window.decibenchOnAudio(b64);
+          }
+        };
+        src.connect(captureNode);
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(
+            null,
+            bytes.subarray(i, i + chunk),
+          );
+        }
+        return btoa(binary);
+      }
+
+      window.decibenchStart = async ({ publicKey, assistantId, sampleRate, metadata }) => {
+        const sr = sampleRate || TARGET_RATE;
+        await buildSyntheticMicrophone(sr);
+
+        // Patch getUserMedia so the Vapi SDK picks up our synthetic stream
+        // rather than trying to access a real microphone (which fails inside
+        // headless Chromium).
+        const originalGUM = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+        navigator.mediaDevices.getUserMedia = async (constraints) => {
+          if (constraints && constraints.audio) {
+            return microphoneStream;
+          }
+          return originalGUM(constraints);
+        };
+
+        vapi = new Vapi(publicKey);
+        let resolveCall;
+        const callPromise = new Promise((res) => {
+          resolveCall = res;
+        });
+
+        vapi.on("call-start", () => {
+          window.decibenchOnEvent("metadata", { kind: "call_start" });
+          resolveCall(true);
+        });
+        vapi.on("call-end", () => {
+          window.decibenchOnEvent("metadata", { kind: "call_end" });
+        });
+        vapi.on("speech-start", () => {
+          window.decibenchOnEvent("metadata", { kind: "agent_speech_start" });
+        });
+        vapi.on("speech-end", () => {
+          window.decibenchOnEvent("turn_end", { reason: "agent_speech_end" });
+        });
+        vapi.on("message", (msg) => {
+          if (msg && msg.type === "transcript" && msg.transcriptType === "final") {
+            if (msg.role === "assistant") {
+              window.decibenchOnTranscript(msg.transcript || "", true);
+            }
+          } else if (msg && msg.type === "function-call") {
+            window.decibenchOnEvent("tool_call", msg);
+          } else if (msg && msg.type === "function-call-result") {
+            window.decibenchOnEvent("tool_result", msg);
+          } else {
+            window.decibenchOnEvent("metadata", msg || {});
+          }
+        });
+        vapi.on("error", (err) => {
+          window.decibenchOnError(
+            "vendor_rejected",
+            String(err && err.message ? err.message : err),
+            false,
+          );
+        });
+
+        await vapi.start(assistantId, {
+          metadata: metadata || {},
+        });
+
+        // Wait for call-start before trying to attach to remote audio.
+        await callPromise;
+
+        const start = performance.now();
+        while (performance.now() - start < 5000) {
+          const audios = document.getElementsByTagName("audio");
+          let attached = false;
+          for (const a of audios) {
+            if (a.srcObject) {
+              attachAgentCapture(a.srcObject, sr);
+              attached = true;
+              break;
+            }
+          }
+          if (attached) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+
+        return vapi.getCallId ? vapi.getCallId() : "vapi_call";
+      };
+
+      window.decibenchPushAudio = (b64) => {
+        if (!playbackNode) return;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
+        playbackNode.port.postMessage({ type: "push", pcm16 });
+      };
+
+      window.decibenchEndTurn = () => {
+        if (playbackNode) {
+          playbackNode.port.postMessage({ type: "flush" });
+        }
+      };
+
+      window.decibenchStop = () => {
+        try {
+          vapi && vapi.stop();
+        } catch (_) {}
+        try {
+          captureNode && captureNode.disconnect();
+        } catch (_) {}
+        try {
+          playbackNode && playbackNode.disconnect();
+        } catch (_) {}
+        try {
+          audioCtx && audioCtx.close();
+        } catch (_) {}
+      };
+    </script>
+  </body>
+</html>

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Decibench Retell bridge page</title>
+  </head>
+  <body>
+    <script type="module">
+      // Retell bridge page.
+      //
+      // Loaded by the Decibench bridge sidecar inside a headless Chromium
+      // page. The sidecar binds these Node-side callbacks via
+      // page.exposeFunction(): decibenchOnAudio, decibenchOnTranscript,
+      // decibenchOnEvent, decibenchOnError. The page exposes its own
+      // entry points on `window`:
+      //   decibenchStart({accessToken, sampleRate}) -> Promise<void>
+      //   decibenchPushAudio(b64) -> void
+      //   decibenchEndTurn() -> void
+      //   decibenchStop() -> void
+
+      import { RetellWebClient } from "https://esm.sh/retell-client-js-sdk@2";
+
+      const TARGET_RATE = 16000;
+      let client = null;
+      let audioCtx = null;
+      let captureNode = null;
+      let playbackNode = null;
+      let captureStream = null;
+      // The MediaStreamTrackGenerator path lets us synthesize a microphone
+      // input. Where unavailable, we fall back to wiring the playback worklet
+      // node into a MediaStreamDestination.
+      let microphoneStream = null;
+
+      async function buildSyntheticMicrophone(sampleRate) {
+        audioCtx = new AudioContext({ sampleRate: 48000 });
+        await audioCtx.audioWorklet.addModule("./audio-shared.js");
+        playbackNode = new AudioWorkletNode(audioCtx, "decibench-playback", {
+          processorOptions: { targetRate: sampleRate },
+        });
+        const dest = audioCtx.createMediaStreamDestination();
+        playbackNode.connect(dest);
+        microphoneStream = dest.stream;
+      }
+
+      function attachAgentCapture(remoteStream, sampleRate) {
+        const src = audioCtx.createMediaStreamSource(remoteStream);
+        captureNode = new AudioWorkletNode(audioCtx, "decibench-capture", {
+          processorOptions: { targetRate: sampleRate },
+        });
+        captureNode.port.onmessage = (e) => {
+          const msg = e.data;
+          if (msg && msg.type === "chunk") {
+            const b64 = bytesToBase64(new Uint8Array(msg.pcm16.buffer));
+            window.decibenchOnAudio(b64);
+          }
+        };
+        src.connect(captureNode);
+        captureStream = remoteStream;
+      }
+
+      function bytesToBase64(bytes) {
+        let binary = "";
+        const chunk = 0x8000;
+        for (let i = 0; i < bytes.length; i += chunk) {
+          binary += String.fromCharCode.apply(
+            null,
+            bytes.subarray(i, i + chunk),
+          );
+        }
+        return btoa(binary);
+      }
+
+      window.decibenchStart = async ({ accessToken, sampleRate }) => {
+        const sr = sampleRate || TARGET_RATE;
+        await buildSyntheticMicrophone(sr);
+
+        client = new RetellWebClient();
+
+        client.on("call_started", () => {
+          window.decibenchOnEvent("metadata", { kind: "call_started" });
+        });
+        client.on("call_ready", () => {
+          window.decibenchOnEvent("metadata", { kind: "call_ready" });
+        });
+        client.on("call_ended", () => {
+          window.decibenchOnEvent("metadata", { kind: "call_ended" });
+        });
+        client.on("agent_start_talking", () => {
+          window.decibenchOnEvent("metadata", { kind: "agent_start_talking" });
+        });
+        client.on("agent_stop_talking", () => {
+          window.decibenchOnEvent("turn_end", { reason: "agent_stop_talking" });
+        });
+        client.on("update", (update) => {
+          if (update && update.transcript) {
+            for (const seg of update.transcript) {
+              if (seg.role === "agent") {
+                window.decibenchOnTranscript(seg.content || "", true);
+              }
+            }
+          }
+        });
+        client.on("error", (err) => {
+          window.decibenchOnError("vendor_rejected", String(err && err.message ? err.message : err), false);
+        });
+        client.on("metadata", (meta) => {
+          window.decibenchOnEvent("metadata", meta || {});
+        });
+
+        // Tell Retell to use our synthetic microphone stream rather than
+        // probing real getUserMedia. The SDK respects `customStream`.
+        await client.startCall({
+          accessToken,
+          sampleRate: sr,
+          captureDeviceId: undefined,
+          playbackDeviceId: undefined,
+          emitRawAudioSamples: true,
+          customStream: microphoneStream,
+        });
+
+        // Hook the SDK's audio playback element so we can re-capture agent
+        // audio. The SDK creates a hidden <audio> tag whose srcObject is the
+        // remote MediaStream — find and use it.
+        const findRemote = () => {
+          const audios = document.getElementsByTagName("audio");
+          for (const a of audios) {
+            if (a.srcObject) {
+              attachAgentCapture(a.srcObject, sr);
+              return true;
+            }
+          }
+          return false;
+        };
+        // Retry briefly since the audio element appears asynchronously.
+        const start = performance.now();
+        while (performance.now() - start < 5000) {
+          if (findRemote()) break;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+      };
+
+      window.decibenchPushAudio = (b64) => {
+        if (!playbackNode) return;
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const pcm16 = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.length / 2);
+        playbackNode.port.postMessage({ type: "push", pcm16 });
+      };
+
+      window.decibenchEndTurn = () => {
+        if (playbackNode) {
+          playbackNode.port.postMessage({ type: "flush" });
+        }
+      };
+
+      window.decibenchStop = () => {
+        try {
+          client && client.stopCall();
+        } catch (_) {}
+        try {
+          captureNode && captureNode.disconnect();
+        } catch (_) {}
+        try {
+          playbackNode && playbackNode.disconnect();
+        } catch (_) {}
+        try {
+          audioCtx && audioCtx.close();
+        } catch (_) {}
+      };
+    </script>
+  </body>
+</html>

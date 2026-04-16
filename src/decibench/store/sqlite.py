@@ -365,9 +365,22 @@ class RunStore:
         category: str | None = None,
         call_id: str | None = None,
         since: str | None = None,
+        max_score: float | None = None,
+        q: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Return imported-call evaluation summaries newest first."""
+        """Return imported-call evaluation summaries newest first.
+
+        Filters used by the failure workbench:
+
+        - ``failed_only``     — only ``passed=0`` rows
+        - ``source``          — exact source match (jsonl/vapi/retell/...)
+        - ``category``        — failed-category substring match (compliance/latency/...)
+        - ``max_score``       — only evaluations with ``score <= max_score``
+        - ``q``               — case-insensitive substring across call id / scenario / source
+        - ``call_id``, ``since``, ``limit`` — usual narrowing
+        """
         category_like = f'%"{category}"%' if category else None
+        q_like = f"%{q.lower()}%" if q else None
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -378,6 +391,13 @@ class RunStore:
                   AND (? IS NULL OR failure_summary LIKE ?)
                   AND (? IS NULL OR call_id = ?)
                   AND (? IS NULL OR evaluated_at >= ?)
+                  AND (? IS NULL OR score <= ?)
+                  AND (
+                    ? IS NULL
+                    OR LOWER(call_id) LIKE ?
+                    OR LOWER(scenario_id) LIKE ?
+                    OR LOWER(source) LIKE ?
+                  )
                 ORDER BY evaluated_at DESC
                 LIMIT ?
                 """,
@@ -391,6 +411,12 @@ class RunStore:
                     call_id,
                     since,
                     since,
+                    max_score,
+                    max_score,
+                    q_like,
+                    q_like,
+                    q_like,
+                    q_like,
                     limit,
                 ),
             ).fetchall()
@@ -402,6 +428,81 @@ class RunStore:
             summary["failure_summary"] = json.loads(summary["failure_summary"])
             summaries.append(summary)
         return summaries
+
+    def failure_inbox_stats(self) -> dict[str, Any]:
+        """Aggregate counts the failure workbench shows in its header.
+
+        Returns a dict shaped like::
+
+            {
+              "total_evaluations": 42,
+              "failed": 17,
+              "passed": 25,
+              "sources": {"jsonl": 30, "vapi": 12},
+              "categories": {"compliance": 9, "latency": 6, "hallucination": 2},
+              "score": {"avg": 71.4, "min": 12.0, "max": 100.0}
+            }
+
+        Aggregating in SQL keeps the dashboard fast — the frontend never has to
+        page through every evaluation just to count them.
+        """
+        with self._connect() as conn:
+            totals_row = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN passed = 0 THEN 1 ELSE 0 END) AS failed,
+                    SUM(CASE WHEN passed = 1 THEN 1 ELSE 0 END) AS passed,
+                    AVG(score) AS avg_score,
+                    MIN(score) AS min_score,
+                    MAX(score) AS max_score
+                FROM call_evaluations
+                """
+            ).fetchone()
+
+            source_rows = conn.execute(
+                """
+                SELECT source, COUNT(*) AS n
+                FROM call_evaluations
+                GROUP BY source
+                ORDER BY n DESC
+                """
+            ).fetchall()
+
+            category_rows = conn.execute(
+                """
+                SELECT failure_summary
+                FROM call_evaluations
+                WHERE passed = 0 AND failure_summary != '[]'
+                """
+            ).fetchall()
+
+        category_counts: dict[str, int] = {}
+        for row in category_rows:
+            try:
+                cats = json.loads(row["failure_summary"])
+            except (TypeError, ValueError):
+                continue
+            for cat in cats:
+                if not isinstance(cat, str):
+                    continue
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+        total = int(totals_row["total"] or 0)
+        return {
+            "total_evaluations": total,
+            "failed": int(totals_row["failed"] or 0),
+            "passed": int(totals_row["passed"] or 0),
+            "sources": {row["source"]: int(row["n"]) for row in source_rows},
+            "categories": dict(
+                sorted(category_counts.items(), key=lambda kv: kv[1], reverse=True)
+            ),
+            "score": {
+                "avg": float(totals_row["avg_score"]) if total else 0.0,
+                "min": float(totals_row["min_score"]) if total else 0.0,
+                "max": float(totals_row["max_score"]) if total else 0.0,
+            },
+        }
 
     def get_call_evaluation(self, evaluation_id: str) -> EvalResult | None:
         """Load a stored imported-call evaluation by id."""
