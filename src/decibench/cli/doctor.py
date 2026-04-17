@@ -1,4 +1,4 @@
-"""decibench doctor — local environment and project health checks."""
+"""decibench doctor -- local environment and project health checks."""
 
 from __future__ import annotations
 
@@ -112,12 +112,23 @@ def _config_checks(config: object, config_path: Path) -> list[tuple[str, str, st
         )
         checks.append((status, "Semantic judge", detail))
 
+    # Target connectivity probe
+    target_uri = typed_config.target.default
+    if target_uri not in ("demo", "demo://"):
+        checks.append(_check_target_connectivity(target_uri))
+
     if typed_config.target.default.startswith(("retell://", "vapi://")):
         bridge_status = "PASS" if shutil.which("decibench-bridge") else "WARN"
         bridge_detail = shutil.which("decibench-bridge") or (
             "Bridge binary not found. Run: decibench bridge install"
         )
         checks.append((bridge_status, "Native bridge", bridge_detail))
+
+    # WS protocol preset
+    ws_proto = typed_config.connector.ws_protocol
+    if target_uri.startswith(("ws://", "wss://")):
+        presets = "raw-pcm, openai-realtime, twilio, gemini-live"
+        checks.append(("PASS", "WS protocol", f"{ws_proto} (presets: {presets})"))
 
     static_index = Path(__file__).resolve().parents[1] / "api" / "static" / "index.html"
     checks.append(
@@ -128,6 +139,62 @@ def _config_checks(config: object, config_path: Path) -> list[tuple[str, str, st
         )
     )
     return checks
+
+
+def _check_target_connectivity(target_uri: str) -> tuple[str, str, str]:
+    """Quick connectivity check for the configured target."""
+    import asyncio
+
+    async def _probe() -> tuple[str, str]:
+        if target_uri.startswith(("ws://", "wss://")):
+            return await _probe_ws(target_uri)
+        if target_uri.startswith(("http://", "https://")):
+            return await _probe_http(target_uri)
+        return ("WARN", f"Cannot probe {target_uri.split(':', 1)[0]}:// targets")
+
+    try:
+        status, detail = asyncio.run(_probe())
+    except Exception as exc:
+        status, detail = "FAIL", f"Probe error: {exc}"
+
+    return (status, "Target reachable", detail)
+
+
+async def _probe_ws(url: str) -> tuple[str, str]:
+    """Attempt a quick WebSocket connect + disconnect."""
+    import asyncio as _aio
+
+    import websockets
+
+    try:
+        ws = await _aio.wait_for(
+            websockets.connect(url, close_timeout=3),
+            timeout=5.0,
+        )
+        await ws.close()
+        return ("PASS", f"Connected to {url}")
+    except TimeoutError:
+        return ("FAIL", f"Connection to {url} timed out (5s)")
+    except ConnectionRefusedError:
+        return ("FAIL", f"Connection refused at {url} -- is the agent running?")
+    except Exception as exc:
+        return ("FAIL", f"{url}: {exc}")
+
+
+async def _probe_http(url: str) -> tuple[str, str]:
+    """Attempt a quick HTTP HEAD request."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.head(url)
+            return ("PASS", f"HTTP {resp.status_code} from {url}")
+    except httpx.ConnectError:
+        return ("FAIL", f"Connection refused at {url} -- is the agent running?")
+    except httpx.TimeoutException:
+        return ("FAIL", f"HTTP request to {url} timed out (5s)")
+    except Exception as exc:
+        return ("FAIL", f"{url}: {exc}")
 
 
 def _package_installed(package: str) -> bool:

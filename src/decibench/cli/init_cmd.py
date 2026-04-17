@@ -122,7 +122,22 @@ def _prompt_target(no_prompt: bool) -> str:
     for index, (_, label) in enumerate(options, start=1):
         click.echo(f"  {index}. {label}")
     selection = int(click.prompt("Target", type=click.IntRange(1, len(options)), default=1))
-    return _TARGET_TEMPLATES[options[selection - 1][0]]
+    target_key = options[selection - 1][0]
+    default_uri = _TARGET_TEMPLATES[target_key]
+
+    # For non-demo targets, ask the user for their actual endpoint
+    if target_key == "demo":
+        return default_uri
+
+    target_prompts = {
+        "websocket": "WebSocket URL",
+        "process": "Command to run",
+        "http": "HTTP endpoint URL",
+        "retell": "Retell agent URI (retell://agent_id)",
+        "vapi": "Vapi agent URI (vapi://agent_id)",
+    }
+    prompt_label = target_prompts.get(target_key, "Target URI")
+    return str(click.prompt(prompt_label, default=default_uri, show_default=True))
 
 
 def _resolve_provider(provider: str | None, no_prompt: bool) -> str:

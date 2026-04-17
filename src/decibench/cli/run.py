@@ -116,6 +116,12 @@ from decibench.store import RunStore, default_store_path
     default=False,
     help="Enable verbose logging.",
 )
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Validate config and list scenarios without executing them.",
+)
 def run_cmd(
     target: str | None,
     suite: str,
@@ -134,6 +140,7 @@ def run_cmd(
     fail_on: str | None,
     output_format: str,
     verbose: bool,
+    dry_run: bool,
 ) -> None:
     """Run test scenarios against a voice agent."""
     import logging
@@ -156,6 +163,11 @@ def run_cmd(
     noise_levels = noise.split(",") if noise else None
     accent_list = accents.split(",") if accents else None
     fail_categories = fail_on.split(",") if fail_on else []
+
+    # --- Dry run: validate config and list scenarios ---
+    if dry_run:
+        _dry_run(config, resolved_target, suite, scenario, noise_levels, accent_list)
+        return
 
     # Resolve min score (fail_under overrides min_score property)
     effective_min_score = (
@@ -318,3 +330,87 @@ def run_cmd(
         from decibench.reporters.html_reporter import HTMLReporter
         HTMLReporter.report(result, output / "dashboard.html")
         click.echo(f"\nDashboard: {output / 'dashboard.html'}")
+
+
+def _dry_run(
+    config: object,
+    target: str,
+    suite: str,
+    scenario_filter: str | None,
+    noise_levels: list[str] | None,
+    accents: list[str] | None,
+) -> None:
+    """Validate config, test target connectivity, list scenarios."""
+    import importlib.util
+
+    from decibench.scenarios.loader import ScenarioLoader
+
+    click.echo("DRY RUN -- validating configuration\n")
+
+    # 1. Config summary
+    click.echo(f"  Target:     {target}")
+    click.echo(f"  Suite:      {suite}")
+    click.echo(f"  TTS:        {config.providers.tts}")  # type: ignore[union-attr]
+    click.echo(f"  STT:        {config.providers.stt}")  # type: ignore[union-attr]
+    click.echo(f"  WS protocol: {config.connector.ws_protocol}")  # type: ignore[union-attr]
+    click.echo()
+
+    # 2. Dependency check
+    issues: list[str] = []
+    if not importlib.util.find_spec("edge_tts"):
+        issues.append("edge-tts not installed (pip install edge-tts)")
+    if not importlib.util.find_spec("faster_whisper"):
+        issues.append("faster-whisper not installed (pip install decibench[stt-whisper])")
+
+    if issues:
+        click.echo("  Dependency issues:")
+        for issue in issues:
+            click.echo(f"    WARN  {issue}")
+        click.echo()
+
+    # 3. Target connectivity
+    if target not in ("demo", "demo://"):
+        click.echo("  Testing target connectivity...")
+        import asyncio
+
+        async def _probe() -> tuple[bool, str]:
+            if target.startswith(("ws://", "wss://")):
+                import websockets
+                try:
+                    ws = await asyncio.wait_for(
+                        websockets.connect(target, close_timeout=3), timeout=5.0
+                    )
+                    await ws.close()
+                    return True, f"Connected to {target}"
+                except Exception as exc:
+                    return False, f"Failed: {exc}"
+            if target.startswith(("http://", "https://")):
+                import httpx
+                try:
+                    async with httpx.AsyncClient(timeout=5.0) as client:
+                        resp = await client.head(target)
+                        return True, f"HTTP {resp.status_code}"
+                except Exception as exc:
+                    return False, f"Failed: {exc}"
+            return True, f"Cannot probe {target} (skipped)"
+
+        ok, msg = asyncio.run(_probe())
+        status = "PASS" if ok else "FAIL"
+        click.echo(f"    {status}  {msg}")
+        click.echo()
+
+    # 4. Load and list scenarios
+    loader = ScenarioLoader()
+    scenarios = loader.load_suite(suite)
+    if scenario_filter:
+        scenarios = [s for s in scenarios if scenario_filter in s.id]
+    if noise_levels or accents:
+        scenarios = loader.expand_variants(scenarios, noise_levels, accents)
+
+    click.echo(f"  Scenarios to run: {len(scenarios)}")
+    for s in scenarios[:20]:
+        click.echo(f"    - {s.id}: {s.description}")
+    if len(scenarios) > 20:
+        click.echo(f"    ... and {len(scenarios) - 20} more")
+
+    click.echo("\nDry run complete. Remove --dry-run to execute.")

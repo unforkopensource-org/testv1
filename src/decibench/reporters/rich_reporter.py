@@ -13,6 +13,8 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
+from decibench import __version__
+
 if TYPE_CHECKING:
     from decibench.models import EvalResult, SuiteResult
 
@@ -29,7 +31,7 @@ class RichReporter:
 
         # Header
         header = Text()
-        header.append(" Decibench v0.1.0", style="bold white")
+        header.append(f" Decibench v{__version__}", style="bold white")
         header.append(" — Voice Agent Quality Score", style="dim")
         self._console.print(Panel(header, border_style="bright_blue"))
 
@@ -135,6 +137,12 @@ class RichReporter:
                 self._console.print(f"  [red]x[/red] {r.scenario_id}")
                 for failure in r.failures[:3]:
                     self._console.print(f"    [dim]{failure}[/dim]")
+                # Show agent transcript preview for debugging
+                transcript_text = self._extract_transcript_preview(r)
+                if transcript_text:
+                    self._console.print(f"    [dim italic]Agent: {transcript_text}[/dim italic]")
+                elif not any("Execution error" in f for f in r.failures):
+                    self._console.print("    [dim italic]Agent: [no response received][/dim italic]")
 
         self._console.print()
 
@@ -278,6 +286,20 @@ class RichReporter:
                 output.append((display_name, round(avg, 1), unit, passed))
 
         return output
+
+    @staticmethod
+    def _extract_transcript_preview(result: EvalResult) -> str:
+        """Extract a short agent transcript preview from an EvalResult."""
+        # Try the transcript list first
+        if result.transcript:
+            agent_texts = [
+                t["text"] for t in result.transcript
+                if t.get("role") == "agent" and t.get("text")
+            ]
+            if agent_texts:
+                full = " ".join(agent_texts)
+                return full[:120] + "..." if len(full) > 120 else full
+        return ""
 
     @staticmethod
     def _score_style(score: float) -> str:

@@ -297,17 +297,19 @@ class Orchestrator:
         connector = get_connector(target)
         is_demo = target in ("demo", "demo://")
 
-        # 2. Connect to agent — merge auth, audio, and any connector-specific
-        # settings into a single dict so connectors can read sample_rate,
-        # websocket_headers, http_headers, etc.
+        # 2. Connect to agent — merge auth, audio, connector protocol settings,
+        # and any extra keys into a single dict so connectors can read
+        # sample_rate, ws_protocol, websocket_headers, etc.
+        connector_cfg = self._config.connector.model_dump()
+        # Only forward non-empty/non-zero connector keys (empty = use preset default)
+        connector_overrides = {k: v for k, v in connector_cfg.items() if v}
         connector_config: dict[str, Any] = {
             **self._config.auth.model_dump(),
             "sample_rate": self._config.audio.sample_rate,
             "channels": self._config.audio.channels,
             "bit_depth": self._config.audio.bit_depth,
+            **connector_overrides,
         }
-        # Forward any extra keys from [auth] that were set via extra="allow"
-        # (e.g. websocket_headers, http_headers, auth_token)
         handle = await connector.connect(target, connector_config)
 
         all_metrics: dict[str, MetricResult] = {}
@@ -471,13 +473,31 @@ class Orchestrator:
                 passed=False,
                 details={"timeout_seconds": scenario.timeout_seconds},
             )
-        except Exception as e:
-            logger.error("Scenario '%s' execution error: %s", scenario.id, e)
+        except ConnectionError as e:
+            logger.error("Scenario '%s' connection error: %s", scenario.id, e)
             return EvalResult(
                 scenario_id=scenario.id,
                 passed=False,
                 score=0.0,
                 failures=[f"Execution error: {e}"],
+                duration_ms=(time.monotonic() - start) * 1000,
+                run_index=run_index,
+            )
+        except Exception as e:
+            err_str = str(e)
+            hint = ""
+            if "no close frame" in err_str or "ConnectionClosed" in type(e).__name__:
+                hint = (
+                    " Hint: The server closed the connection unexpectedly. "
+                    "Check ws_protocol setting (try: openai-realtime, gemini-live, or twilio) "
+                    "and verify the sample_rate matches what the agent expects."
+                )
+            logger.error("Scenario '%s' execution error: %s%s", scenario.id, e, hint)
+            return EvalResult(
+                scenario_id=scenario.id,
+                passed=False,
+                score=0.0,
+                failures=[f"Execution error: {e}{hint}"],
                 duration_ms=(time.monotonic() - start) * 1000,
                 run_index=run_index,
             )

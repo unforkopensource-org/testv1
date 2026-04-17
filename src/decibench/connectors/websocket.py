@@ -1,10 +1,13 @@
 """WebSocket connector — the universal connector for most voice agents.
 
 Covers: Vapi, Retell, ElevenLabs, Deepgram, Pipecat, OpenAI Realtime,
-and any agent with a WebSocket endpoint that accepts/returns audio frames.
+Gemini Live, Twilio MediaStreams, and any agent with a WebSocket endpoint.
 
-Protocol behavior is configurable via ``[auth]`` or connector config keys:
+Protocol behavior is configurable via ``ws_protocol`` preset or individual keys:
 
+- ``ws_protocol``       — preset name: ``"auto"``, ``"raw-pcm"``,
+                          ``"openai-realtime"``, ``"twilio"``,
+                          ``"gemini-live"`` (default: ``"auto"``)
 - ``sample_rate``       — audio sample rate in Hz (default: 16000)
 - ``websocket_headers`` — dict of extra HTTP headers for the WS handshake
 - ``ws_send_format``    — ``"binary"`` (default), ``"json_base64"``, or
@@ -20,6 +23,7 @@ Protocol behavior is configurable via ``[auth]`` or connector config keys:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json as _json
 import logging
@@ -46,6 +50,64 @@ _DEFAULT_CHUNK_BYTES = 3200
 _DEFAULT_RECV_TIMEOUT_SECONDS = 2.0
 _DEFAULT_SILENCE_MAX = 2
 
+# ---------------------------------------------------------------------------
+# Protocol presets — known configurations for popular voice agent platforms
+# ---------------------------------------------------------------------------
+PROTOCOL_PRESETS: dict[str, dict[str, Any]] = {
+    "raw-pcm": {
+        "sample_rate": 16000,
+        "ws_send_format": "binary",
+        "ws_recv_timeout": 2.0,
+        "ws_silence_max": 2,
+    },
+    "openai-realtime": {
+        "sample_rate": 24000,
+        "ws_send_format": "json_base64",
+        "ws_commit_message": '{"type": "input_audio_buffer.commit"}',
+        "ws_recv_timeout": 3.0,
+        "ws_silence_max": 3,
+    },
+    "twilio": {
+        "sample_rate": 8000,
+        "ws_send_format": "json_base64",
+        "ws_recv_timeout": 5.0,
+        "ws_silence_max": 3,
+    },
+    "gemini-live": {
+        "sample_rate": 16000,
+        "ws_send_format": "json_base64",
+        "ws_recv_timeout": 5.0,
+        "ws_silence_max": 3,
+    },
+}
+
+
+def _detect_protocol_from_message(data: dict[str, Any]) -> str | None:
+    """Fingerprint a JSON message to identify the agent protocol.
+
+    Returns a preset name if recognized, or None.
+    """
+    msg_type = data.get("type", "")
+
+    # OpenAI Realtime: first message is {"type": "session.created", ...}
+    if msg_type == "session.created" or msg_type == "session.update":
+        return "openai-realtime"
+
+    # Twilio MediaStreams: first message is {"event": "connected", ...}
+    event = data.get("event", "")
+    if event in ("connected", "start"):
+        stream_sid = data.get("streamSid") or data.get("start", {}).get("streamSid")
+        if stream_sid or event == "connected":
+            return "twilio"
+
+    # Gemini Live: first message contains setupComplete or serverContent
+    if "setupComplete" in data or msg_type == "setupComplete":
+        return "gemini-live"
+    if "serverContent" in data:
+        return "gemini-live"
+
+    return None
+
 
 @register_connector("ws")
 class WebSocketConnector(BaseConnector):
@@ -55,7 +117,7 @@ class WebSocketConnector(BaseConnector):
     Handles both binary-only and mixed (binary + JSON text) protocols,
     including agents that wrap audio as base64 in JSON (OpenAI Realtime style).
 
-    Protocol knobs are read from the ``config`` dict passed to ``connect()``.
+    Use ``ws_protocol`` to pick a preset or ``"auto"`` to detect automatically.
     """
 
     required_sample_rate: int = 16000
@@ -73,13 +135,12 @@ class WebSocketConnector(BaseConnector):
         self._commit_message: dict[str, Any] | None = None
         self._recv_timeout: float = _DEFAULT_RECV_TIMEOUT_SECONDS
         self._silence_max: int = _DEFAULT_SILENCE_MAX
+        # Buffered initial message captured during auto-detect
+        self._initial_message: bytes | str | None = None
+        self._detected_protocol: str | None = None
 
     async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
-        try:
-            import websockets
-        except ImportError as e:
-            msg = "websockets package required: pip install decibench"
-            raise ImportError(msg) from e
+        import websockets
 
         # Build connection URL
         url = target
@@ -89,36 +150,59 @@ class WebSocketConnector(BaseConnector):
         # Extract optional headers from config
         headers = config.get("websocket_headers", {})
 
-        # Allow overriding sample rate from config
-        if "sample_rate" in config:
-            self.required_sample_rate = int(config["sample_rate"])
+        # ----- Resolve protocol preset -----
+        protocol = str(config.get("ws_protocol", "auto"))
 
-        # Protocol configuration
-        self._send_format = str(config.get("ws_send_format", "binary"))
-        self._recv_timeout = float(config.get("ws_recv_timeout", _DEFAULT_RECV_TIMEOUT_SECONDS))
-        self._silence_max = int(config.get("ws_silence_max", _DEFAULT_SILENCE_MAX))
+        if protocol != "auto" and protocol in PROTOCOL_PRESETS:
+            # Explicit preset: apply its defaults, then let user config override
+            preset = PROTOCOL_PRESETS[protocol]
+            effective = {**preset}
+            for key in ("sample_rate", "ws_send_format", "ws_commit_message",
+                        "ws_setup_message", "ws_recv_timeout", "ws_silence_max"):
+                if key in config and config[key] != "":
+                    effective[key] = config[key]
+        else:
+            # auto or unknown: start with raw-pcm defaults, detect after connect
+            effective = dict(config)
+
+        # Apply sample rate
+        if "sample_rate" in effective:
+            self.required_sample_rate = int(effective["sample_rate"])
+
+        # Apply protocol settings
+        self._send_format = str(effective.get("ws_send_format", "binary"))
+        self._recv_timeout = float(effective.get("ws_recv_timeout", _DEFAULT_RECV_TIMEOUT_SECONDS))
+        self._silence_max = int(effective.get("ws_silence_max", _DEFAULT_SILENCE_MAX))
 
         # Parse optional commit / setup messages
-        raw_commit = config.get("ws_commit_message")
-        if isinstance(raw_commit, str):
+        raw_commit = effective.get("ws_commit_message")
+        if isinstance(raw_commit, str) and raw_commit:
             self._commit_message = _json.loads(raw_commit)
         elif isinstance(raw_commit, dict):
             self._commit_message = raw_commit
         else:
             self._commit_message = None
 
-        raw_setup = config.get("ws_setup_message")
+        raw_setup = effective.get("ws_setup_message")
 
-        logger.info("Connecting to WebSocket: %s (send_format=%s, sample_rate=%d)",
-                     url, self._send_format, self.required_sample_rate)
-        self._ws = await websockets.connect(
-            url,
-            additional_headers=headers,
-            max_size=10 * 1024 * 1024,  # 10MB max message
-            ping_interval=30,
-            ping_timeout=30,
-            close_timeout=10,
-        )
+        logger.info("Connecting to WebSocket: %s (protocol=%s, send_format=%s, sample_rate=%d)",
+                     url, protocol, self._send_format, self.required_sample_rate)
+
+        try:
+            self._ws = await websockets.connect(
+                url,
+                additional_headers=headers,
+                max_size=10 * 1024 * 1024,  # 10MB max message
+                ping_interval=30,
+                ping_timeout=30,
+                close_timeout=10,
+            )
+        except Exception as exc:
+            msg = (
+                f"WebSocket connection to {url} failed: {exc}. "
+                "Check that the target URL is correct and the agent is running."
+            )
+            raise ConnectionError(msg) from exc
 
         # Send optional setup/session-init message right after connect
         if raw_setup:
@@ -126,10 +210,17 @@ class WebSocketConnector(BaseConnector):
             await self._ws.send(setup_text)
             logger.debug("Sent setup message: %s", setup_text[:200])
 
+        # ----- Auto-detect protocol if needed -----
+        self._initial_message = None
+        self._detected_protocol = protocol if protocol != "auto" else None
+
+        if protocol == "auto":
+            await self._auto_detect_protocol()
+
         handle = ConnectionHandle(
             connector_type="ws",
             start_time_ns=time.monotonic_ns(),
-            state={"url": url},
+            state={"url": url, "protocol": self._detected_protocol or protocol},
         )
         self._recorded_audio.clear()
         self._events.clear()
@@ -138,12 +229,77 @@ class WebSocketConnector(BaseConnector):
         self._send_count = 0
         return handle
 
+    async def _auto_detect_protocol(self) -> None:
+        """Try to read one initial message to fingerprint the agent protocol.
+
+        If the server sends a greeting/session message within 3 seconds, we
+        use it to pick a protocol preset. The message is buffered and replayed
+        in ``receive_events``. If nothing arrives, we stay on raw-pcm defaults.
+        """
+        try:
+            message = await asyncio.wait_for(self._ws.recv(), timeout=3.0)
+        except (TimeoutError, Exception):
+            # No greeting — agent waits for audio first. Keep raw-pcm defaults.
+            logger.debug("Auto-detect: no initial message, using raw-pcm defaults")
+            self._detected_protocol = "raw-pcm"
+            return
+
+        # Buffer the message so receive_events can replay it
+        self._initial_message = message
+
+        detected: str | None = None
+
+        if isinstance(message, str):
+            try:
+                data = _json.loads(message)
+                detected = _detect_protocol_from_message(data)
+            except _json.JSONDecodeError:
+                pass
+
+            if detected:
+                logger.info("Auto-detected protocol: %s", detected)
+                self._detected_protocol = detected
+                self._apply_preset(detected)
+                return
+
+            # Got JSON but didn't match a known pattern — try json_base64
+            # sending since the server clearly speaks JSON.
+            logger.info("Auto-detect: server speaks JSON, switching to json_base64 send format")
+            self._send_format = "json_base64"
+            self._detected_protocol = "json-detected"
+            return
+
+        if isinstance(message, bytes):
+            # Server sent binary first — it speaks raw PCM
+            logger.debug("Auto-detect: server sent binary, using raw-pcm")
+            self._detected_protocol = "raw-pcm"
+
+    def _apply_preset(self, preset_name: str) -> None:
+        """Apply a protocol preset, updating internal state."""
+        preset = PROTOCOL_PRESETS.get(preset_name)
+        if not preset:
+            return
+
+        self.required_sample_rate = int(preset.get("sample_rate", self.required_sample_rate))
+        self._send_format = str(preset.get("ws_send_format", self._send_format))
+        self._recv_timeout = float(preset.get("ws_recv_timeout", self._recv_timeout))
+        self._silence_max = int(preset.get("ws_silence_max", self._silence_max))
+
+        raw_commit = preset.get("ws_commit_message")
+        if isinstance(raw_commit, str) and raw_commit:
+            self._commit_message = _json.loads(raw_commit)
+        elif isinstance(raw_commit, dict):
+            self._commit_message = raw_commit
+
+        logger.info(
+            "Applied preset '%s': send_format=%s, sample_rate=%d, recv_timeout=%.1f",
+            preset_name, self._send_format, self.required_sample_rate, self._recv_timeout,
+        )
+
     async def send_audio(self, handle: ConnectionHandle, audio: AudioBuffer) -> None:
         if self._ws is None:
             msg = "Not connected — call connect() first"
             raise RuntimeError(msg)
-
-        import asyncio
 
         self._send_count += 1
 
@@ -173,11 +329,16 @@ class WebSocketConnector(BaseConnector):
             msg = "Not connected — call connect() first"
             raise RuntimeError(msg)
 
-        import asyncio
-        import json
-
         start_ns = handle.start_time_ns
         silence_count = 0
+
+        # Replay the initial message captured during auto-detect
+        if self._initial_message is not None:
+            event = self._parse_message(self._initial_message, start_ns)
+            if event is not None:
+                self._events.append(event)
+                yield event
+            self._initial_message = None
 
         while silence_count < self._silence_max:
             try:
@@ -188,57 +349,65 @@ class WebSocketConnector(BaseConnector):
             except TimeoutError:
                 silence_count += 1
                 continue
-            except Exception:
+            except Exception as exc:
+                logger.debug("WebSocket receive ended: %s", exc)
                 break
 
             silence_count = 0
-            now_ms = (time.monotonic_ns() - start_ns) / 1_000_000
-
-            if isinstance(message, bytes):
-                self._recorded_audio.extend(message)
-                event = AgentEvent(
-                    type=EventType.AGENT_AUDIO,
-                    timestamp_ms=now_ms,
-                    audio=message,
-                )
-            elif isinstance(message, str):
-                try:
-                    data = json.loads(message)
-                except json.JSONDecodeError:
-                    data = {"raw": message}
-
-                # Check for base64-encoded audio in JSON (OpenAI Realtime style)
-                audio_bytes = self._extract_json_audio(data)
-                if audio_bytes:
-                    self._json_audio_mode = True
-                    self._recorded_audio.extend(audio_bytes)
-                    event = AgentEvent(
-                        type=EventType.AGENT_AUDIO,
-                        timestamp_ms=now_ms,
-                        audio=audio_bytes,
-                    )
-                else:
-                    event_type = self._classify_json_event(data)
-                    # Capture agent-provided transcripts
-                    if event_type == EventType.AGENT_TRANSCRIPT:
-                        text = (
-                            data.get("text", "")
-                            or data.get("transcript", "")
-                            or data.get("message", "")
-                            or data.get("delta", "")
-                        )
-                        if text:
-                            self._transcript_parts.append(text)
-                    event = AgentEvent(
-                        type=event_type,
-                        timestamp_ms=now_ms,
-                        data=data,
-                    )
-            else:
+            event = self._parse_message(message, start_ns)
+            if event is None:
                 continue
 
             self._events.append(event)
             yield event
+
+    def _parse_message(self, message: bytes | str, start_ns: int) -> AgentEvent | None:
+        """Parse a single WebSocket message into an AgentEvent."""
+        now_ms = (time.monotonic_ns() - start_ns) / 1_000_000
+
+        if isinstance(message, bytes):
+            self._recorded_audio.extend(message)
+            return AgentEvent(
+                type=EventType.AGENT_AUDIO,
+                timestamp_ms=now_ms,
+                audio=message,
+            )
+
+        if isinstance(message, str):
+            try:
+                data = _json.loads(message)
+            except _json.JSONDecodeError:
+                data = {"raw": message}
+
+            # Check for base64-encoded audio in JSON (OpenAI Realtime style)
+            audio_bytes = self._extract_json_audio(data)
+            if audio_bytes:
+                self._json_audio_mode = True
+                self._recorded_audio.extend(audio_bytes)
+                return AgentEvent(
+                    type=EventType.AGENT_AUDIO,
+                    timestamp_ms=now_ms,
+                    audio=audio_bytes,
+                )
+
+            event_type = self._classify_json_event(data)
+            # Capture agent-provided transcripts
+            if event_type == EventType.AGENT_TRANSCRIPT:
+                text = (
+                    data.get("text", "")
+                    or data.get("transcript", "")
+                    or data.get("message", "")
+                    or data.get("delta", "")
+                )
+                if text:
+                    self._transcript_parts.append(text)
+            return AgentEvent(
+                type=event_type,
+                timestamp_ms=now_ms,
+                data=data,
+            )
+
+        return None
 
     async def disconnect(self, handle: ConnectionHandle) -> CallSummary:
         duration_ms = (time.monotonic_ns() - handle.start_time_ns) / 1_000_000
@@ -271,6 +440,7 @@ class WebSocketConnector(BaseConnector):
         - {"event": "media", "media": {"payload": "<base64>"}}  (Twilio/generic)
         - {"audio": "<base64>"}  (simple)
         - {"type": "response.audio.delta", "delta": "<base64>"}  (OpenAI Realtime)
+        - {"serverContent": {"modelTurn": {"parts": [{"inlineData": {"data": "<base64>"}}]}}} (Gemini)
         """
         # Twilio / generic media event format
         if data.get("event") == "media":
@@ -289,6 +459,21 @@ class WebSocketConnector(BaseConnector):
                     return base64.b64decode(delta)
                 except Exception:
                     return None
+
+        # Gemini Live API format
+        server_content = data.get("serverContent")
+        if isinstance(server_content, dict):
+            model_turn = server_content.get("modelTurn", {})
+            parts = model_turn.get("parts", [])
+            for part in parts:
+                inline = part.get("inlineData", {})
+                b64 = inline.get("data")
+                if b64:
+                    try:
+                        return base64.b64decode(b64)
+                    except Exception:
+                        logger.debug("Failed to decode Gemini inlineData part")
+                        continue
 
         # Simple base64 audio field
         if "audio" in data and isinstance(data["audio"], str):

@@ -78,6 +78,16 @@ class AudioConfig(BaseModel):
     noise_profiles_dir: str = "./noise_profiles"
 
 
+class ConnectorConfig(BaseModel):
+    """[connector] section — WebSocket protocol and transport settings."""
+    ws_protocol: str = "auto"
+    ws_send_format: str = ""
+    ws_setup_message: str = ""
+    ws_commit_message: str = ""
+    ws_recv_timeout: float = 0
+    ws_silence_max: int = 0
+
+
 class EvaluationConfig(BaseModel):
     """[evaluation] section."""
     runs_per_scenario: int = Field(default=1, ge=1, le=20)
@@ -140,6 +150,7 @@ class DecibenchConfig(BaseModel):
     target: TargetConfig = Field(default_factory=TargetConfig)
     auth: AuthConfig = Field(default_factory=AuthConfig)
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
+    connector: ConnectorConfig = Field(default_factory=ConnectorConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     scoring: ScoringConfig = Field(default_factory=ScoringConfig)
