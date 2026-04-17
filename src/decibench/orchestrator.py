@@ -297,9 +297,18 @@ class Orchestrator:
         connector = get_connector(target)
         is_demo = target in ("demo", "demo://")
 
-        # 2. Connect to agent
-        auth_config = self._config.auth.model_dump()
-        handle = await connector.connect(target, auth_config)
+        # 2. Connect to agent — merge auth, audio, and any connector-specific
+        # settings into a single dict so connectors can read sample_rate,
+        # websocket_headers, http_headers, etc.
+        connector_config: dict[str, Any] = {
+            **self._config.auth.model_dump(),
+            "sample_rate": self._config.audio.sample_rate,
+            "channels": self._config.audio.channels,
+            "bit_depth": self._config.audio.bit_depth,
+        }
+        # Forward any extra keys from [auth] that were set via extra="allow"
+        # (e.g. websocket_headers, http_headers, auth_token)
+        handle = await connector.connect(target, connector_config)
 
         all_metrics: dict[str, MetricResult] = {}
         transcript = TranscriptResult(text="")

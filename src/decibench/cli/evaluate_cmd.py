@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 
 import click
 from rich.console import Console
@@ -41,7 +40,7 @@ def evaluate_calls_cmd(
     """Evaluate imported production calls and grade them."""
     console = Console()
     store = RunStore()
-    config = load_config(Path("decibench.toml"))
+    config = load_config()
 
     traces_meta = store.list_call_traces(limit=limit, source=source, since=since)
     if not traces_meta:
@@ -50,7 +49,17 @@ def evaluate_calls_cmd(
 
     console.print(f"[bold cyan]Evaluating {len(traces_meta)} imported traces...[/bold cyan]")
 
-    judge = get_judge(config.providers.judge_model) if config.has_judge else None
+    judge = (
+        get_judge(
+            config.providers.judge,
+            model=config.providers.judge_model,
+            api_key=config.providers.judge_api_key,
+            temperature=config.evaluation.judge_temperature,
+            judge_runs=config.evaluation.judge_runs,
+        )
+        if config.has_judge
+        else None
+    )
 
     # We load transcript-only compatible evaluators for now.
     evaluators = [

@@ -1,780 +1,671 @@
-# Decibench Local Product UX Plan
+# Decibench v1.0 Last-Mile Plan
 
-Updated: 2026-04-16
+Updated: 2026-04-15
 
-## 1. Purpose
+Goal: finish the last three product tracks that matter and make Decibench:
 
-This plan replaces the previous roadmap completely.
+- **10/10 as an open-source voice-agent QA product**
+- **9/10 against paid competitors**
 
-The next Decibench push is not about adding random new engine features. It is
-about turning the existing codebase into a local-first product that a developer
-or team can install, configure, trust, and use without reading the source.
+This file intentionally replaces the broader roadmap with a tighter launch plan.
 
-This document defines the exact UX, architecture, distribution model, provider
-strategy, and implementation order for that work.
+Everything below assumes the earlier foundation work is already done and does
+not get reopened unless one of the three remaining tracks truly requires it.
 
-## 2. Product Stance
+---
 
-Decibench is:
+## Current Verified State
 
-- local-first
-- terminal-first
-- open-source
-- GitHub-first
-- self-hosted on the user's own machine
-- optionally enhanced by a local browser workbench
+Latest local verification:
 
-Decibench is not:
+| Check | Status |
+| --- | --- |
+| Ruff | Passing |
+| Mypy | Passing |
+| Tests | Passing |
+| Tests count | 138 passed |
+| Versioning | 1.0.0 aligned |
+| Store | SQLite + migrations + privacy redaction shipped |
+| Importers | JSONL + Vapi + Retell shipped |
+| Imported-call evaluation | CLI + API + persistence shipped |
+| Replay/regression generation | Shipped |
+| API | Shipped |
+| Local dashboard | Shipped, but basic |
+| Native Vapi connector | Stubbed, not end to end |
+| Native Retell connector | Stubbed, not end to end |
 
-- a hosted SaaS
-- a cloud account system
-- an OAuth login product for model vendors
-- a product that stores user API keys in Decibench servers
-- a product that requires users to hand-edit secrets into config files
+## What Is Already Considered Done
 
-The target experience is:
+For v1.0 scope, the following are treated as complete enough and should not
+be reopened unless they block one of the final three tracks:
 
-1. install the CLI
-2. run one setup command
-3. paste keys locally if semantic judging is desired
-4. pick a provider and model
-5. run a suite
-6. open the local workbench
+- package version alignment
+- local-first SQLite store
+- schema migrations
+- privacy redaction
+- JSONL import
+- Vapi import
+- Retell import
+- imported-call evaluation
+- imported-call evaluation persistence
+- replay to regression scenario generation
+- CLI run/import/replay/evaluate/runs/serve flows
+- API base for runs, calls, evaluations, and scenario generation
+- quality gate: Ruff, mypy, tests
 
-## 3. Current Foundation Already Implemented
+That means the release is no longer blocked by “more foundation.”
 
-This plan starts from a real platform, not a blank page. The current codebase
-already has the foundations that matter:
+The release is blocked by the final product gap between:
 
-- strict code quality gates
-- persistent local store and migrations
-- imported-call ingestion
-- evaluation and replay
-- regression scenario generation
-- local API
-- local workbench
-- native bridge architecture
-- docs-truth validation
+- **good code**
+- and **a complete open-source product people trust immediately**
 
-That means the right next move is not deeper infra. The right next move is
-better first-run UX, setup trust, provider setup, and local product polish.
+---
 
-## 4. North Star Outcome
+## Scope Lock
 
-For v1.0, a new user should be able to do this without guesswork:
+Only these three tracks remain in scope for the current push:
 
-```bash
-pipx install decibench
-decibench doctor
-decibench init
-decibench run --target demo --suite quick
-decibench serve
-```
+1. **Finish one real native connector end to end**
+2. **Turn the dashboard into a real failure-analysis workbench**
+3. **Bring README and product claims down to exact truth**
 
-If they want semantic evaluation:
+Everything else is subordinate to one of those three tracks.
 
-```bash
-decibench auth set openai
-decibench models use openai gpt-5-mini
-decibench run --target demo --suite quick
-```
+If a task does not directly help one of them, it is not part of this plan.
 
-If they want native browser-bridge connectors:
+---
 
-```bash
-decibench bridge install
-decibench doctor
-decibench run --target retell://agent_id --suite quick
-```
+## Why These Three Are The Right Final Tracks
 
-The product should feel like one coherent local tool, not a Python package plus
-some docs plus a sidecar plus guesswork.
+### 1. Native connector
 
-## 5. Product Principles
+This is the biggest remaining gap versus Hamming, Roark, Cekura, and Coval.
 
-### 5.1 Local-first secret handling
+Right now Decibench has:
 
-- User pastes API keys locally.
-- Keys are stored in the OS keychain/keyring by default.
-- `decibench.toml` stores configuration, not raw secrets.
-- Environment variable fallback is supported.
-- Plain-text secrets in config are allowed only as an explicit escape hatch with
-  a warning.
+- a strong core engine
+- a good local store
+- production import and replay
+- a credible CLI/API story
 
-### 5.2 Deterministic-first, semantic-optional
+But the native Vapi and Retell connectors still stop at the exact point where a
+serious team expects the product to take over.
 
-- A user must be able to get value without any model account at all.
-- Semantic judging is an optional upgrade path, not a startup blocker.
-- The CLI should clearly distinguish:
-  - deterministic mode
-  - semantic mode
+Until one of those connectors works end to end, Decibench still looks partly
+like a framework and partly like a product.
 
-### 5.3 Opinionated defaults, manual escape hatch
+### 2. Failure workbench
 
-- Decibench should ship curated default models.
-- Decibench should fetch live model lists when keys exist.
-- Decibench should always allow manual custom model entry.
+The current dashboard proves the storage and API layers are real.
 
-### 5.4 Terminal-first, local workbench second
+It does **not** yet give a QA or product user the fastest path from:
 
-- Primary onboarding happens in the terminal.
-- The browser workbench is launched locally by the CLI.
-- The UI is a local analysis surface, not the product's identity.
+- “this call failed”
+- to “I know why”
+- to “I can turn it into a regression”
 
-### 5.5 Product truth over marketing
+Paid tools win here because they make failure inspection easy and fast.
 
-- Docs must reflect what is actually implemented.
-- Commands must explain what they are doing.
-- Status levels must be explicit: `shipped`, `beta`, `experimental`, `planned`.
+### 3. README truth
 
-## 6. Distribution Architecture
+Open-source trust is fragile.
 
-## 6.1 Source of truth
+If the code is more truthful than the README, users feel baited.
+If the README is more truthful than the code, users feel safe.
 
-- GitHub repository is the canonical source.
-- GitHub Releases are the canonical release history.
-- Release notes must map to real shipped capabilities.
+For open source, this is not polish. It is part of the product.
 
-## 6.2 Python distribution
+---
 
-Primary distribution target:
+## Track 1: Ship One Real Native Connector End To End
 
-- PyPI package: `decibench`
+## Decision
 
-Primary install UX:
-
-```bash
-pipx install decibench
-```
-
-Why:
-
-- `pipx` is the cleanest user-facing install path for a Python CLI
-- it keeps dependencies isolated
-- it matches the local-tool positioning better than asking users to manage a
-  project virtualenv just to try the product
-
-Interim fallback:
-
-```bash
-pipx install git+https://github.com/unforkopensource-org/testv1.git
-```
-
-That fallback is acceptable while PyPI is not published, but it is not the
-final polished path.
-
-## 6.3 Native bridge distribution
-
-Primary distribution target:
-
-- npm package: `decibench-bridge`
-
-The bridge remains a separate distributable because:
-
-- it needs Node.js
-- it needs Playwright/Chromium
-- it is not appropriate to hide browser automation inside a pure Python wheel
-
-But the user should not have to think in npm terms during normal setup.
-
-Decibench must provide a first-class wrapper command:
-
-```bash
-decibench bridge install
-```
-
-That command owns the bridge bootstrap UX.
-
-## 6.4 Release channels
-
-Required channels:
-
-- GitHub source repo
-- GitHub Releases
-- PyPI for `decibench`
-- npm for `decibench-bridge`
-
-Optional later:
-
-- Homebrew formula
-
-Not required for v1.0.
-
-## 7. Configuration and Secret Architecture
-
-## 7.1 Config file
-
-Project-local config file:
-
-- `decibench.toml`
-
-This file should store:
-
-- project settings
-- target URI
-- suite settings
-- judge provider
-- judge model
-- provider base URL when needed
-- local workbench/API settings
-- bridge behavior flags
-
-This file should not store raw secrets by default.
-
-## 7.2 Secret storage
-
-Primary secret backend:
-
-- system keyring/keychain via Python `keyring`
-
-Fallback:
-
-- environment variables
-
-Explicit escape hatch:
-
-- plain-text config secret only if the user deliberately opts into it and the
-  CLI warns them
-
-Recommended service naming:
-
-- `decibench/openai/default`
-- `decibench/anthropic/default`
-- `decibench/gemini/default`
-
-## 7.3 Auth command UX
-
-Required command surface:
-
-```bash
-decibench auth set openai
-decibench auth set anthropic
-decibench auth set gemini
-decibench auth list
-decibench auth test openai
-decibench auth remove openai
-```
-
-Behavior for `auth set`:
-
-1. prompt for API key with hidden input
-2. store in keyring by default
-3. optionally verify connectivity
-4. optionally ask whether to set this provider as the semantic judge default
-
-Behavior for `auth list`:
-
-- show providers configured
-- do not print secrets
-- show where the secret is coming from:
-  - keyring
-  - env var
-  - config file
-
-Behavior for `auth test`:
-
-- validate the secret exists
-- validate the provider endpoint is reachable
-- optionally list one or more models
-
-## 8. LLM Provider and Model Architecture
-
-Initial semantic judge providers for v1.0:
-
-- OpenAI
-- Anthropic
-- Gemini
-
-This is intentionally narrow. The goal is a clean product, not a huge provider
-matrix on day one.
-
-## 8.1 Provider API strategy
-
-Each provider must support three layers:
-
-1. curated built-in recommended models
-2. live model listing if a key is configured
-3. manual custom model entry
-
-That gives the user the best balance between a smooth first run and full local
-control.
-
-## 8.2 Default model choices
-
-These defaults are Decibench product defaults for semantic evaluation. They are
-chosen for availability, price/performance, latency, and low-friction first-run
-UX. They are not claims that these are the strongest models overall.
-
-| Provider | Decibench default | Why this is the default | Higher-accuracy option | Budget option |
-| --- | --- | --- | --- | --- |
-| OpenAI | `gpt-5-mini` | best practical balance for evaluation and CI cost | `gpt-5.1` | `gpt-5-nano` |
-| Anthropic | `claude-sonnet-4-20250514` | strong quality with better speed/cost balance than Opus | `claude-opus-4-1-20250805` | `claude-3-5-haiku-20241022` |
-| Gemini | `gemini-2.5-flash` | current safe default for price/performance and broad availability | `gemini-2.5-pro` | `gemini-2.5-flash-lite` |
-
-Important Gemini decision:
-
-- Do not use `gemini-2.0-flash` as the default.
-- Treat Gemini 2.0 models as legacy/manual-only.
-- Prefer `gemini-2.5-flash` for the shipped default.
+**Ship Retell first. Reuse the same bridge architecture for Vapi second.**
 
 Reason:
 
-- Google's current docs position Gemini 2.5 Flash as the best price/performance
-  model.
-- Google's deprecations page lists Gemini 2.0 Flash with `gemini-2.5-flash` as
-  the recommended replacement.
+- Retell’s web-call flow is a cleaner first target for a supported browser-side
+  connector path.
+- The current code already has a Retell importer and connector scaffold.
+- A shared browser/WebRTC bridge can be adapted to Vapi after the first one is
+  real.
 
-## 8.3 Provider model listing
+We are **not** trying to finish both platforms at once.
 
-Required commands:
+v1.0 only needs one native connector to be truly real. The second one can reuse
+ the same architecture immediately after.
 
-```bash
-decibench models list openai
-decibench models list anthropic
-decibench models list gemini
-decibench models use openai gpt-5-mini
-decibench models use anthropic claude-sonnet-4-20250514
-decibench models use gemini gemini-2.5-flash
-```
+## Best Technical Approach
 
-Live listing sources:
+### Keep
 
-- OpenAI: `GET /v1/models`
-- Anthropic: `GET /v1/models`
-- Gemini: `GET /v1beta/models`
+- **Python** as the main product runtime
+- existing orchestrator
+- existing connector model
+- existing store and evaluation pipeline
 
-If live listing fails:
+### Add
 
-- fall back to Decibench's curated model catalog
-- clearly tell the user that the list is a local fallback, not a live fetch
+- a **small Node 20 + TypeScript sidecar**
+- **Playwright + headless Chromium**
+- the **official browser SDK** for the target platform
+- a **local WebSocket bridge** between Python and the sidecar
 
-## 8.4 Provider UX presets
+### Why This Stack Is Best
 
-For each provider, expose 3 preset intents:
+The official native voice SDKs are usually browser/WebRTC-first.
 
-- `balanced`
-- `quality`
-- `budget`
+Trying to force a pure-Python custom WebRTC implementation for v1.0 would be a
+high-risk detour:
 
-Example resolution:
+- more protocol reverse engineering
+- more transport bugs
+- harder audio debugging
+- less confidence that the path matches the supported vendor path
 
-- OpenAI
-  - `balanced` -> `gpt-5-mini`
-  - `quality` -> `gpt-5.1`
-  - `budget` -> `gpt-5-nano`
-- Anthropic
-  - `balanced` -> `claude-sonnet-4-20250514`
-  - `quality` -> `claude-opus-4-1-20250805`
-  - `budget` -> `claude-3-5-haiku-20241022`
-- Gemini
-  - `balanced` -> `gemini-2.5-flash`
-  - `quality` -> `gemini-2.5-pro`
-  - `budget` -> `gemini-2.5-flash-lite`
+The best v1.0 move is:
 
-This matters because most users do not actually want to memorize vendor model
-names on first run.
+1. use the vendor’s official browser-side flow
+2. run it in a reproducible headless browser
+3. bridge PCM audio and events cleanly back to Python
 
-## 9. CLI UX Architecture
+This keeps Decibench honest and dramatically lowers the “works in docs, breaks
+in reality” risk.
 
-The CLI needs to become the real product surface.
+## Recommended Stack
 
-## 9.1 `decibench init`
+### Runtime
 
-`init` must become an interactive setup wizard.
+- **Python 3.11+** stays as the main Decibench runtime
+- **Node 20 LTS** only for the native bridge sidecar
 
-Questions:
+### Browser layer
 
-1. project name
-2. target type
-   - demo
-   - websocket
-   - process
-   - http
-   - retell native
-   - vapi native
-3. evaluation mode
-   - deterministic only
-   - semantic with model provider
-4. semantic provider if chosen
-   - openai
-   - anthropic
-   - gemini
-5. whether to paste a key now
-6. whether to use the recommended default model
-7. whether to run a smoke test immediately
+- **Playwright** for launching and controlling Chromium reliably
+- **Headless Chromium** for browser-only SDK and WebRTC APIs
 
-Outputs:
+### Platform adapter
 
-- writes `decibench.toml`
-- optionally stores secrets in keyring
-- prints exact next commands
+- **Retell official browser/web SDK**
+- Later: **Vapi official browser/web SDK**
 
-`init` should not dump a long config template and walk away.
+### Audio bridge
 
-## 9.2 `decibench auth`
+- **AudioWorklet** in the browser page for low-latency PCM push/pull
+- local **WebSocket control channel** between Python and sidecar
+- explicit support for:
+  - PCM16 mono
+  - sample-rate conversion
+  - end-of-turn signaling
+  - transcript events
+  - metadata/tool-call events when available
 
-This is the secret-management entry point.
+### Local process model
 
-Required subcommands:
+- Python CLI starts the sidecar on demand
+- sidecar lifecycle is fully owned by the connector
+- no long-running external daemon required
 
-- `set`
-- `list`
-- `test`
-- `remove`
-
-The auth flow must feel safe and boring.
-
-## 9.3 `decibench models`
-
-This is the model-selection entry point.
-
-Required subcommands:
-
-- `list <provider>`
-- `use <provider> <model>`
-- `preset <provider> <balanced|quality|budget>`
-- `current`
-
-This command should update config, not mutate secrets.
-
-## 9.4 `decibench doctor`
-
-`doctor` must become the trust command.
-
-It should check:
-
-- Python version
-- package version
-- config presence and validity
-- store path
-- keyring availability
-- configured providers
-- provider key presence
-- optional provider connectivity
-- Node presence
-- npm presence
-- bridge install status
-- Playwright browser presence
-- local dashboard assets
-- native connector readiness
-
-Output must be structured:
-
-- PASS
-- WARN
-- FAIL
-
-Every FAIL must include the next command to fix it.
-
-## 9.5 `decibench bridge`
-
-Required subcommands:
-
-- `install`
-- `doctor`
-- `version`
-
-`bridge install` must:
-
-1. detect Node and npm
-2. install `decibench-bridge`
-3. install Playwright browser dependencies
-4. verify the bridge binary is runnable
-5. report the installed version
-
-The user should not have to remember separate npm and Playwright commands.
-
-## 9.6 `decibench serve`
-
-`serve` must remain local-only.
-
-Required behavior:
-
-- starts the local API and workbench
-- prints a clean local URL
-- does not pretend anything is remotely hosted
-- detects missing dashboard assets and tells the user how to build or install
-  them
-
-Recommended output:
+## Architecture
 
 ```text
-Decibench workbench is running locally at:
-http://127.0.0.1:8000
-
-Use Ctrl+C to stop it.
+Python Orchestrator
+  -> RetellConnector
+    -> local WebSocket bridge
+      -> Node/TS sidecar
+        -> Playwright Chromium page
+          -> official browser SDK
+            -> vendor native call
 ```
 
-Optional later:
+## What We Must Build
 
-- `--open`
+### Phase 1A: Generic native bridge protocol
 
-Not required for the first UX pass.
+Build a platform-neutral bridge contract first:
 
-## 10. Local Workbench Architecture
+- `connect`
+- `send_audio_chunk`
+- `end_turn`
+- `receive_event`
+- `disconnect`
+- `health`
+- `capabilities`
 
-The workbench remains a local analysis tool launched by the CLI.
+Every message should be structured JSON with explicit event types.
 
-Keep the existing stack:
+Do not start with one-off Retell-specific wire messages.
 
-- FastAPI local backend
-- Vue 3 frontend
-- TypeScript
-- Vite
-- Tailwind
-- TanStack Query
+### Phase 1B: Retell adapter
 
-Do not turn the workbench into a hosted product.
+Implement the Retell bridge adapter against the generic contract:
 
-Required UX goal:
+- token acquisition / web-call session bootstrap
+- browser page session start
+- PCM in -> browser track
+- browser audio/transcript/events -> Decibench events
+- clean teardown
+- timeout handling
+- failure diagnostics
 
-- a user runs `decibench serve`
-- opens the local URL
-- inspects runs, calls, evaluations, and regressions locally
+### Phase 1C: Connector integration
 
-## 11. Exact User Flows to Implement
+Wire the current Python connector to the sidecar:
 
-## 11.1 Flow A: zero-key first run
+- remove `NotImplementedError`
+- stream audio from orchestrator
+- persist events and metadata into the existing store
+- make sure imported and live-native runs look similar in downstream analysis
 
-```bash
-pipx install decibench
-decibench doctor
-decibench init
-decibench run --target demo --suite quick
-decibench serve
-```
+### Phase 1D: Integration tests
 
-Expected experience:
+Add guarded tests:
 
-- no provider account required
-- no secret setup required
-- user still reaches a meaningful success state
+- mocked sidecar protocol tests
+- end-to-end bridge tests with fixture audio
+- real Retell integration test behind environment flags
 
-## 11.2 Flow B: semantic first run with OpenAI
+### Phase 1E: Vapi reuse
 
-```bash
-pipx install decibench
-decibench init
-decibench auth set openai
-decibench models preset openai balanced
-decibench run --target demo --suite quick
-decibench serve
-```
+After Retell is working, adapt the same bridge architecture for Vapi:
 
-Expected experience:
+- keep the same local bridge contract
+- swap only the browser SDK adapter layer
 
-- prompt for key locally
-- store in keyring
-- default model becomes `gpt-5-mini`
+## What We Must Not Do
 
-## 11.3 Flow C: semantic first run with Anthropic
+- do **not** build a custom pure-Python WebRTC stack for v1.0
+- do **not** implement Retell and Vapi in parallel before one is real
+- do **not** claim native support in README until the end-to-end test passes
+- do **not** hide failures behind vague “experimental” wording if the path is
+  still not usable
 
-```bash
-decibench auth set anthropic
-decibench models preset anthropic balanced
-decibench run --target demo --suite quick
-```
+## Definition Of Done
 
-Expected experience:
+Retell native support is done when all of the following are true:
 
-- prompt for key locally
-- store in keyring
-- default model becomes `claude-sonnet-4-20250514`
+- `decibench run --target retell://... --suite quick` works against a real agent
+- real audio goes in and real audio/events come back
+- transcript/events show up in stored run data
+- failures are debuggable from logs and stored metadata
+- integration tests exist
+- docs show exact prerequisites and limitations
 
-## 11.4 Flow D: semantic first run with Gemini
+Vapi support is done for this release only if it reaches the same bar.
+If not, it stays explicitly marked **planned next**, not implied.
 
-```bash
-decibench auth set gemini
-decibench models preset gemini balanced
-decibench run --target demo --suite quick
-```
+---
 
-Expected experience:
+## Track 2: Turn The Dashboard Into A Failure Workbench
 
-- prompt for key locally
-- store in keyring
-- default model becomes `gemini-2.5-flash`
-- Gemini 2.0 is not suggested as a default
+## Decision
 
-## 11.5 Flow E: native connector first run
+Keep the backend stack.
+Upgrade the frontend stack.
 
-```bash
-pipx install decibench
-decibench bridge install
-decibench doctor
-decibench init
-decibench run --target retell://agent_id --suite quick
-```
+### Keep
 
-Expected experience:
+- **FastAPI** as the API server
+- **SQLite** as the local data source
+- existing API endpoints where they already fit
 
-- bridge setup is wrapped by the Decibench CLI
-- user is not forced to manually stitch npm and Playwright steps together
+### Replace
 
-## 12. Tech Stack Choices
+Replace the current inline CDN prototype page with a real built frontend:
 
-These are the chosen implementation technologies for this UX push.
+- **Vue 3**
+- **TypeScript**
+- **Vite**
+- **Tailwind CSS**
+- **Vue Router**
+- **TanStack Query** for API state
+- **Apache ECharts** for score, latency, and span timeline visuals
 
-| Area | Chosen stack | Why |
-| --- | --- | --- |
-| CLI | Python + Click + Rich | already aligned with the codebase and good for interactive local UX |
-| Config | TOML | readable, stable, existing project fit |
-| Secret storage | Python `keyring` | best local-first user trust story |
-| Provider HTTP | `httpx` | async/sync friendly, clean API |
-| Local API | FastAPI | already in use |
-| Workbench UI | Vue 3 + TS + Vite + Tailwind + TanStack Query | already in use and appropriate |
-| Native bridge | Node 20 + TypeScript + Playwright + Chromium | right toolchain for browser SDK automation |
-| Python packaging | PyPI + `pipx` | best UX for a CLI product |
-| Bridge packaging | npm | right distribution channel for the sidecar |
-| Releases | GitHub Releases | canonical public release surface |
+## Why This Stack Is Best
 
-## 13. Step-by-Step Implementation Order
+The current dashboard already uses Vue, so a React rewrite would just create
+stack churn without user benefit.
 
-## Phase 1: auth foundation
+The problem is not Vue.
+The problem is that the current page is still a prototype:
 
-Build:
+- CDN scripts
+- no routing
+- no failure inbox
+- no real call-analysis flow
 
-- keyring-backed secret store
-- `decibench auth set/list/test/remove`
-- provider key validation
+Vue 3 + TypeScript + Vite is the right upgrade because it:
 
-Done when:
+- keeps continuity with the existing UI
+- adds strong typing for complex run/evaluation data
+- is easy to ship as static assets from FastAPI
+- is friendly to open-source contributors
 
-- no raw key is required in `decibench.toml`
-- a user can store and test OpenAI, Anthropic, and Gemini keys locally
+## Product Goal
 
-## Phase 2: model catalog and provider defaults
+The dashboard should answer this in under one minute:
 
-Build:
+1. Which calls failed?
+2. Why did they fail?
+3. Which category failed?
+4. What transcript and timing evidence supports that?
+5. Can I turn this into a regression scenario right now?
 
-- curated model catalog for OpenAI, Anthropic, Gemini
-- `decibench models list`
-- `decibench models use`
-- `decibench models preset`
+If it cannot answer those questions fast, it is still a browser, not a workbench.
 
-Done when:
+## Required Screens
 
-- recommended defaults resolve correctly
-- live listing works when keys are present
-- manual custom model entry remains possible
+### 2A. Failure Inbox
 
-## Phase 3: `init` wizard
+Primary landing view should become failures, not generic runs.
 
-Build:
+Must show:
 
-- interactive project setup
-- semantic vs deterministic selection
-- provider + model selection
-- optional auth handoff during setup
+- stored imported-call evaluations
+- failed-only toggle
+- source filter
+- category filter
+- score threshold filter
+- search by call id / target / source
+- newest first
 
-Done when:
+### 2B. Call Detail
 
-- a first-time user can reach a valid `decibench.toml` without hand-editing it
+For one call, show:
 
-## Phase 4: `doctor` as the trust command
+- transcript
+- source metadata
+- evaluation score
+- failed categories
+- failed metrics
+- call spans / timing timeline
+- button to generate/export regression scenario
 
-Build:
+### 2C. Evaluation Detail
 
-- richer environment checks
-- provider readiness checks
-- bridge readiness checks
-- actionable remediation output
+For one stored evaluation, show:
 
-Done when:
+- failure summary
+- full failure list
+- metric table
+- pass/fail chips
+- links back to the source call
 
-- a new user can run `decibench doctor` and know exactly what is broken and how
-  to fix it
+### 2D. Run Detail
 
-## Phase 5: bridge UX wrapper
+Keep run inspection, but make it secondary to failure analysis.
 
-Build:
+### 2E. Regression Action
 
-- `decibench bridge install`
-- `decibench bridge doctor`
-- bridge version detection
+The UI must make this a first-class action:
 
-Done when:
+- inspect call
+- generate scenario
+- copy/export YAML
+- link evaluation to generated regression
 
-- a user can bootstrap native bridge support from the CLI without reading
-  separate npm and Playwright instructions
+## Required API Work
 
-## Phase 6: `serve` and workbench polish
+The frontend should not parse huge payloads client-side to discover structure.
 
-Build:
+Backend should expose first-class endpoints for:
 
-- clearer local launch output
-- clean handling of missing assets
-- stronger local-only messaging
+- call evaluations list with filtering
+- one call with transcript and metadata
+- one evaluation with metrics and failure summary
+- spans/timeline data
+- regression scenario generation
 
-Done when:
+If any of those are missing or awkward, add explicit endpoints instead of
+forcing frontend hacks.
 
-- the workbench launch feels like a product command, not a dev-server command
+## UX Rules
 
-## Phase 7: release and docs truth
+- failure-first default
+- stable links for runs, calls, and evaluations
+- no hidden state
+- no giant cards inside cards
+- keyboard-copyable IDs
+- redaction markers must remain visible and trustworthy
+- call detail should work for a product/QA user without CLI knowledge
 
-Build:
+## What We Must Not Do
 
-- README rewritten around real local-first flows
-- install docs for `pipx`
-- bridge install docs aligned with CLI wrapper
-- provider setup docs aligned with auth/model commands
-- release notes and support matrix updated
+- do **not** build auth/multi-user org features for v1.0
+- do **not** build a hosted SaaS dashboard
+- do **not** keep the current one-file CDN prototype as the final UI
+- do **not** optimize for pretty over debuggable
 
-Done when:
+## Definition Of Done
 
-- the README matches the CLI exactly
-- the docs do not require users to infer hidden setup steps
+The dashboard/workbench is done when:
 
-## 14. Definition of Done for This UX Push
+- the landing view is useful for finding failed calls
+- call detail makes failure reasoning obvious
+- transcript + failed metrics + timing evidence are visible together
+- stored evaluations are easy to inspect
+- regression generation is one action, not a CLI detour
+- the UI feels reliable enough for a non-engineer to use alone
 
-This plan is done only when all of the following are true:
+---
 
-1. a new user can install Decibench with `pipx`
-2. a new user can set up semantic evaluation without editing secrets into config
-3. OpenAI, Anthropic, and Gemini all work through the same UX shape
-4. Gemini defaults to `gemini-2.5-flash`, not Gemini 2.0
-5. `decibench init` is interactive and useful
-6. `decibench doctor` is actionable
-7. `decibench bridge install` hides the bridge bootstrap complexity
-8. `decibench serve` launches the local workbench cleanly
-9. README, help text, and release docs all match the shipped behavior
+## Track 3: Bring README And Product Claims Down To Exact Truth
 
-## 15. What Is Explicitly Out of Scope for This Plan
+## Decision
 
-Not in scope for this pass:
+The README becomes a product contract, not a hype page.
 
-- hosted Decibench cloud
-- browser login/account system
-- OAuth login to OpenAI, Anthropic, or Google
-- storing secrets in Decibench-owned infrastructure
-- exploding the provider matrix beyond OpenAI, Anthropic, and Gemini
-- adding unrelated new evaluators before the first-run UX is clean
-- rewriting the core engine just to support the UX work
+For v1.0 we should prefer:
 
-## 16. Final Product Positioning After This Plan
+- **less scope claimed**
+- **more trust earned**
 
-If this plan is implemented correctly, Decibench should feel like this:
+That is the correct open-source trade.
 
-> A serious local voice-agent testing product that installs like a CLI, stores
-> secrets safely, lets the user choose deterministic or semantic evaluation,
-> supports OpenAI, Claude, and Gemini out of the box, and launches a local
-> workbench without any hosted dependency.
+## Best Documentation Stack
 
-That is the right v1.0 story.
+### Repo docs
 
-## 17. Model Decision Notes
+- **README.md** for the product overview
+- **Markdown docs in `/docs`**
+- optional **MkDocs Material** for a published static docs site
 
-The default model decisions in this plan were checked against official provider
-docs on 2026-04-16.
+### Truth guardrail
 
-Important notes:
+Add a small docs-validation step in CI:
 
-- OpenAI docs currently present GPT-5 family models prominently, and `gpt-5-mini`
-  is the strongest practical default for cost-sensitive evaluation workflows.
-- Anthropic docs list `claude-sonnet-4-20250514` as the balanced Claude Sonnet 4
-  API model name, while `claude-opus-4-1-20250805` is the premium accuracy tier.
-- Google Gemini docs position `gemini-2.5-flash` as the best price/performance
-  model, and the deprecations page recommends `gemini-2.5-flash` as the
-  replacement for Gemini 2.0 Flash.
+- README smoke commands must actually run
+- support matrix must match real code status
+- unsupported connectors/features must not appear as shipped
 
-Those facts should be encoded in the product, not left as tribal knowledge.
+The most important improvement is not the docs site framework.
+It is the **truth model**.
+
+## Truth Model
+
+Every user-facing capability must be labeled as exactly one of:
+
+- **Shipped**
+- **Beta**
+- **Experimental**
+- **Planned**
+
+### Shipped
+
+Code exists, works end to end, and is covered by tests or a release smoke path.
+
+### Beta
+
+Usable but with known limits, and clearly documented.
+
+### Experimental
+
+Code exists but should not be sold as reliable.
+
+### Planned
+
+Not shipped yet.
+
+## README Rewrite Rules
+
+### Must stay
+
+- what Decibench actually does today
+- local-first story
+- open-source story
+- reproducibility story
+- import/evaluate/replay/regression loop
+- CLI-first workflow
+
+### Must be corrected
+
+- connector claims that imply LiveKit, ElevenLabs, Bland, SIP/PSTN are already
+  first-class shipped connectors
+- any phrasing that implies native Vapi/Retell are already end to end when they
+  are not
+- any pricing/comparison table entries that can drift without a date or source
+- any “best in category” language not supported by what the product can do now
+
+### Must be added
+
+- exact support matrix
+- exact native-connector status
+- honest limitations section
+- “best with WebSocket, exec, import/replay today” guidance
+- “what is partial vs what is done” section
+
+## Best Way To Keep README Honest
+
+Create one source of truth for feature status.
+
+Recommended approach:
+
+- add a small status manifest in repo, for example `docs/support-matrix.yaml`
+- generate the rendered support matrix from that file
+- require updates there when a connector/importer/UI status changes
+
+This is much better than hand-maintaining status in multiple places.
+
+## Minimal Required Docs Set
+
+Before v1.0, docs must include:
+
+1. Install
+2. Quick start with `demo`
+3. Real-time testing via WebSocket
+4. Local `exec:` testing
+5. Production import and evaluation
+6. Replay to regression scenario
+7. Native connector status table
+8. Dashboard/workbench guide
+9. Honest limitations
+
+## What We Must Not Do
+
+- do **not** market future connectors as current product surface
+- do **not** keep stale competitor pricing tables without sources/dates
+- do **not** let README claim “supports anything” if the real support path is
+  WebSocket/import only
+- do **not** confuse “architecture can support” with “product ships today”
+
+## Definition Of Done
+
+README/docs truth is done when:
+
+- a new user gets the right expectation from the first screenful
+- every support claim maps to a tested or explicitly labeled status
+- the support matrix matches the code
+- there are no obvious “marketing outran implementation” gaps
+
+---
+
+## Exact Execution Order
+
+This is the order to finish the release without wasting time:
+
+1. **README truth pass now**
+   - remove inflated claims
+   - add support matrix
+   - label native connector status exactly
+
+2. **Native bridge protocol**
+   - generic sidecar contract
+   - sidecar lifecycle management
+   - logs and diagnostics
+
+3. **Retell end-to-end native connector**
+   - browser bridge
+   - connector integration
+   - tests
+
+4. **Dashboard failure inbox and call detail**
+   - failure-first landing page
+   - call/evaluation detail
+   - regression action
+
+5. **Vapi native connector on the same bridge architecture**
+   - only after Retell is real
+
+6. **Final docs truth pass**
+   - update status matrix
+   - publish exact supported workflows
+
+---
+
+## Launch Gate
+
+Decibench can claim the launch target only when all of the following are true:
+
+- [x] Ruff passes
+- [x] Mypy passes
+- [x] Tests pass
+- [x] Store/import/evaluate/replay loop works
+- [x] API exists
+- [x] Basic local dashboard exists
+- [ ] One native connector works end to end against a real vendor target
+- [ ] Dashboard is useful for failed-call triage, not only run browsing
+- [ ] README and docs match the true product surface exactly
+
+---
+
+## What 10/10 Open Source Means Here
+
+For this release, “10/10 open source” does **not** mean:
+
+- most integrations
+- most features
+- biggest website
+
+It means:
+
+- easiest trustworthy local install
+- easiest trustworthy CI usage
+- easiest trustworthy self-hosted failure analysis
+- easiest trustworthy extension path
+- docs that tell the truth
+
+Open source wins when users feel:
+
+> “This tool is honest, usable, and mine.”
+
+That is the bar.
+
+---
+
+## What 9/10 Against Paid Means Here
+
+Decibench does not need to beat every paid platform feature-for-feature.
+
+It needs to cover the real reliability loop well enough that a serious team can:
+
+- test before deploy
+- test locally
+- import real calls
+- evaluate them
+- inspect failures
+- generate regressions
+- run again
+
+If we finish the three tracks in this file properly, that bar is realistic.

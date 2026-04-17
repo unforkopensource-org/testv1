@@ -82,7 +82,7 @@ def test_call_evaluate_endpoint(monkeypatch, tmp_path: Path):
         )
     )
 
-    response = client.get("/calls/call-456/evaluate")
+    response = client.post("/calls/call-456/evaluate")
 
     assert response.status_code == 200
     data = response.json()
@@ -182,7 +182,7 @@ def test_failure_inbox_stats_endpoint(monkeypatch, tmp_path: Path):
             ],
         )
     )
-    eval_response = client.get("/calls/call-stats-1/evaluate")
+    eval_response = client.post("/calls/call-stats-1/evaluate")
     assert eval_response.status_code == 200
 
     stats = client.get("/failure-inbox/stats").json()
@@ -206,7 +206,7 @@ def test_call_evaluations_search_and_score_filters(monkeypatch, tmp_path: Path):
         )
     )
 
-    assert client.get("/calls/filter-call-A/evaluate").status_code == 200
+    assert client.post("/calls/filter-call-A/evaluate").status_code == 200
 
     # `q` substring search hits the call id.
     found = client.get("/call-evaluations", params={"q": "filter-call-a"}).json()

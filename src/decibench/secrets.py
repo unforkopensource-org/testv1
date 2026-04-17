@@ -42,8 +42,32 @@ def env_var_name(provider: str) -> str:
 
 
 def keyring_available() -> bool:
-    """Whether a usable keyring backend is importable."""
-    return _keyring is not None
+    """Whether a usable keyring backend is present and responsive.
+
+    Goes beyond a simple import check: attempts a test read to verify that
+    an actual backend is configured and working (not just that the module
+    loaded).  The probe result is cached so the cost is paid at most once
+    per process.
+    """
+    if _keyring is None:
+        return False
+    return _probe_keyring()
+
+
+_keyring_probe_result: bool | None = None
+
+
+def _probe_keyring() -> bool:
+    """One-shot probe: try a harmless read to confirm the backend works."""
+    global _keyring_probe_result
+    if _keyring_probe_result is not None:
+        return _keyring_probe_result
+    try:
+        _keyring.get_password("decibench-probe", "probe")
+        _keyring_probe_result = True
+    except Exception:
+        _keyring_probe_result = False
+    return _keyring_probe_result
 
 
 def store_secret(provider: str, secret: str, profile: str = "default") -> None:

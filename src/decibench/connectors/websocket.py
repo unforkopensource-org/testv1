@@ -2,11 +2,26 @@
 
 Covers: Vapi, Retell, ElevenLabs, Deepgram, Pipecat, OpenAI Realtime,
 and any agent with a WebSocket endpoint that accepts/returns audio frames.
+
+Protocol behavior is configurable via ``[auth]`` or connector config keys:
+
+- ``sample_rate``       — audio sample rate in Hz (default: 16000)
+- ``websocket_headers`` — dict of extra HTTP headers for the WS handshake
+- ``ws_send_format``    — ``"binary"`` (default), ``"json_base64"``, or
+                          ``"json_bytes"``
+- ``ws_commit_message`` — JSON string to send after each caller turn to
+                          signal end-of-turn (default: none)
+- ``ws_setup_message``  — JSON string to send immediately after connect
+                          (default: none)
+- ``ws_recv_timeout``   — per-message receive timeout in seconds (default: 2.0)
+- ``ws_silence_max``    — number of consecutive recv timeouts that signal the
+                          agent is done (default: 2)
 """
 
 from __future__ import annotations
 
 import base64
+import json as _json
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -28,7 +43,8 @@ logger = logging.getLogger(__name__)
 
 # Default chunk size: 100ms of 16kHz 16-bit mono audio
 _DEFAULT_CHUNK_BYTES = 3200
-_RECV_TIMEOUT_SECONDS = 2.0
+_DEFAULT_RECV_TIMEOUT_SECONDS = 2.0
+_DEFAULT_SILENCE_MAX = 2
 
 
 @register_connector("ws")
@@ -38,19 +54,25 @@ class WebSocketConnector(BaseConnector):
     Sends raw audio frames, receives raw audio frames or JSON events.
     Handles both binary-only and mixed (binary + JSON text) protocols,
     including agents that wrap audio as base64 in JSON (OpenAI Realtime style).
+
+    Protocol knobs are read from the ``config`` dict passed to ``connect()``.
     """
 
-    # OpenAI Realtime API requires 24kHz; auto-detected on connect
-    required_sample_rate: int = 24000
+    required_sample_rate: int = 16000
     required_encoding = BaseConnector.required_encoding
 
     def __init__(self, **kwargs: Any) -> None:
         self._ws: Any = None
         self._recorded_audio = bytearray()
         self._events: list[AgentEvent] = []
-        self._transcript_parts: list[str] = []  # Agent-provided transcripts
+        self._transcript_parts: list[str] = []
         self._json_audio_mode = False
-        self._send_count = 0  # Track send_audio calls for turn counting
+        self._send_count = 0
+        # Protocol config — set in connect()
+        self._send_format: str = "binary"
+        self._commit_message: dict[str, Any] | None = None
+        self._recv_timeout: float = _DEFAULT_RECV_TIMEOUT_SECONDS
+        self._silence_max: int = _DEFAULT_SILENCE_MAX
 
     async def connect(self, target: str, config: dict[str, Any]) -> ConnectionHandle:
         try:
@@ -71,7 +93,24 @@ class WebSocketConnector(BaseConnector):
         if "sample_rate" in config:
             self.required_sample_rate = int(config["sample_rate"])
 
-        logger.info("Connecting to WebSocket: %s", url)
+        # Protocol configuration
+        self._send_format = str(config.get("ws_send_format", "binary"))
+        self._recv_timeout = float(config.get("ws_recv_timeout", _DEFAULT_RECV_TIMEOUT_SECONDS))
+        self._silence_max = int(config.get("ws_silence_max", _DEFAULT_SILENCE_MAX))
+
+        # Parse optional commit / setup messages
+        raw_commit = config.get("ws_commit_message")
+        if isinstance(raw_commit, str):
+            self._commit_message = _json.loads(raw_commit)
+        elif isinstance(raw_commit, dict):
+            self._commit_message = raw_commit
+        else:
+            self._commit_message = None
+
+        raw_setup = config.get("ws_setup_message")
+
+        logger.info("Connecting to WebSocket: %s (send_format=%s, sample_rate=%d)",
+                     url, self._send_format, self.required_sample_rate)
         self._ws = await websockets.connect(
             url,
             additional_headers=headers,
@@ -80,6 +119,12 @@ class WebSocketConnector(BaseConnector):
             ping_timeout=30,
             close_timeout=10,
         )
+
+        # Send optional setup/session-init message right after connect
+        if raw_setup:
+            setup_text = raw_setup if isinstance(raw_setup, str) else _json.dumps(raw_setup)
+            await self._ws.send(setup_text)
+            logger.debug("Sent setup message: %s", setup_text[:200])
 
         handle = ConnectionHandle(
             connector_type="ws",
@@ -107,9 +152,21 @@ class WebSocketConnector(BaseConnector):
         data = audio.data
         for offset in range(0, len(data), chunk_size):
             chunk = data[offset : offset + chunk_size]
-            await self._ws.send(chunk)
+            if self._send_format == "json_base64":
+                payload = _json.dumps({"audio": base64.b64encode(chunk).decode()})
+                await self._ws.send(payload)
+            elif self._send_format == "json_bytes":
+                payload = _json.dumps({"audio": list(chunk)})
+                await self._ws.send(payload)
+            else:
+                await self._ws.send(chunk)
             # Pace sending to ~real-time to avoid overwhelming the agent
             await asyncio.sleep(0.02)
+
+        # Send explicit end-of-turn commit if configured
+        if self._commit_message is not None:
+            await self._ws.send(_json.dumps(self._commit_message))
+            logger.debug("Sent commit message after caller turn")
 
     async def receive_events(self, handle: ConnectionHandle) -> AsyncIterator[AgentEvent]:
         if self._ws is None:
@@ -121,13 +178,12 @@ class WebSocketConnector(BaseConnector):
 
         start_ns = handle.start_time_ns
         silence_count = 0
-        max_silence = 2  # Stop after 2 consecutive timeouts (4s of silence = done)
 
-        while silence_count < max_silence:
+        while silence_count < self._silence_max:
             try:
                 message = await asyncio.wait_for(
                     self._ws.recv(),
-                    timeout=_RECV_TIMEOUT_SECONDS,
+                    timeout=self._recv_timeout,
                 )
             except TimeoutError:
                 silence_count += 1

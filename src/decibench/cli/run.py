@@ -259,6 +259,27 @@ def run_cmd(
         else:
             (output / "junit.xml").write_text(junit_xml, encoding="utf-8")
 
+    # Automatic failure: exit nonzero when every single scenario failed due
+    # to execution or configuration errors — regardless of --fail-under flags.
+    # This catches "RETELL_API_KEY missing" and similar total-failure cases
+    # that would otherwise silently return 0.
+    all_execution_failures = (
+        result.total_scenarios > 0
+        and result.failed == result.total_scenarios
+        and all(
+            any("Execution error" in f or "error" in f.lower() for f in er.failures)
+            for er in result.results
+            if er.failures
+        )
+    )
+    if all_execution_failures:
+        click.echo(
+            f"All {result.total_scenarios} scenario(s) failed with execution errors. "
+            "Check your target, credentials, and configuration.",
+            err=True,
+        )
+        sys.exit(1)
+
     # Evaluate Threshold Failures
     if fail_gate_active:
         failed = False

@@ -88,5 +88,8 @@ def models_current_cmd() -> None:
 
 
 def _write_selection(provider: str, model: str) -> None:
-    config_path = Path.cwd() / "decibench.toml"
+    from decibench.config import find_config
+
+    found = find_config()
+    config_path = found if found is not None else Path.cwd() / "decibench.toml"
     update_judge_settings(config_path, provider=provider, model=model)

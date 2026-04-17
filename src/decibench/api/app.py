@@ -68,7 +68,17 @@ def get_store() -> RunStore:
 def get_imported_call_evaluator() -> ImportedCallEvaluator:
     """Build the default imported-call evaluator stack from on-disk config."""
     config = load_config()
-    judge = get_judge(config.providers.judge_model) if config.has_judge else None
+    judge = (
+        get_judge(
+            config.providers.judge,
+            model=config.providers.judge_model,
+            api_key=config.providers.judge_api_key,
+            temperature=config.evaluation.judge_temperature,
+            judge_runs=config.evaluation.judge_runs,
+        )
+        if config.has_judge
+        else None
+    )
     evaluators = [
         ComplianceEvaluator(),
         HallucinationEvaluator(),
@@ -138,7 +148,7 @@ def health() -> dict[str, str]:
 
 @app.get("/runs", summary="List runs")
 def list_runs(limit: int = 50, skip: int = 0) -> list[dict[str, Any]]:
-    return get_store().list_runs(limit=limit)[skip:]
+    return get_store().list_runs(limit=limit, offset=skip)
 
 
 @app.get("/runs/{run_id}", summary="Get run by ID", response_model=SuiteResult)
@@ -159,7 +169,7 @@ def list_calls(
     source: str | None = None,
     since: str | None = None,
 ) -> list[dict[str, Any]]:
-    return get_store().list_call_traces(limit=limit, source=source, since=since)[skip:]
+    return get_store().list_call_traces(limit=limit, offset=skip, source=source, since=since)
 
 
 @app.get("/calls/{call_id}", summary="Get call by ID", response_model=CallTrace)
@@ -230,7 +240,7 @@ def generate_regression(call_id: str) -> RegressionScenarioPayload:
     )
 
 
-@app.get(
+@app.post(
     "/calls/{call_id}/evaluate",
     summary="Evaluate an imported call trace (and persist the result)",
     response_model=EvalResult,

@@ -19,16 +19,37 @@ SCHEMA_VERSION = 3
 
 
 def default_store_path(base_dir: Path | None = None) -> Path:
-    """Return the default local Decibench database path."""
+    """Return the default local Decibench database path.
+
+    Resolution order:
+
+    1. ``DECIBENCH_STORE_PATH`` environment variable (absolute override).
+    2. Explicit ``base_dir`` argument.
+    3. Walk up from ``cwd()`` looking for ``decibench.toml`` and anchor the
+       store next to it.  This makes store location stable regardless of
+       which subdirectory the user happens to be in.
+    4. Fall back to ``cwd()`` if no project root is found.
+    5. Use the system temp dir if the resolved root is not writable.
+    """
     env_path = os.environ.get("DECIBENCH_STORE_PATH")
     if env_path:
         return Path(env_path).expanduser()
 
-    root = base_dir or Path.cwd()
+    root = base_dir if base_dir is not None else _find_project_root() or Path.cwd()
+
     if os.access(root, os.W_OK):
         return root / ".decibench" / "decibench.sqlite"
 
     return Path(tempfile.gettempdir()) / "decibench" / "decibench.sqlite"
+
+
+def _find_project_root() -> Path | None:
+    """Walk up from cwd looking for decibench.toml."""
+    current = Path.cwd()
+    for directory in [current, *current.parents]:
+        if (directory / "decibench.toml").is_file():
+            return directory
+    return None
 
 
 class RunStore:
@@ -185,7 +206,7 @@ class RunStore:
                     )
         return run_id
 
-    def list_runs(self, limit: int = 20) -> list[dict[str, Any]]:
+    def list_runs(self, limit: int = 20, offset: int = 0) -> list[dict[str, Any]]:
         """Return run summaries newest first."""
         with self._connect() as conn:
             rows = conn.execute(
@@ -193,9 +214,9 @@ class RunStore:
                 SELECT id, suite, target, score, passed, failed, total_scenarios, timestamp
                 FROM runs
                 ORDER BY timestamp DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (limit,),
+                (limit, offset),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -285,6 +306,7 @@ class RunStore:
     def list_call_traces(
         self,
         limit: int = 20,
+        offset: int = 0,
         source: str | None = None,
         since: str | None = None,
     ) -> list[dict[str, Any]]:
@@ -297,9 +319,9 @@ class RunStore:
                 WHERE (? IS NULL OR source = ?)
                   AND (? IS NULL OR imported_at >= ?)
                 ORDER BY imported_at DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (source, source, since, since, limit),
+                (source, source, since, since, limit, offset),
             ).fetchall()
         return [dict(row) for row in rows]
 

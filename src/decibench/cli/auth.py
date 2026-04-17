@@ -34,7 +34,13 @@ def auth_set_cmd(provider: str) -> None:
     secret = click.prompt(f"Paste your {provider} API key", hide_input=True).strip()
     if not secret:
         raise click.ClickException("API key cannot be empty.")
-    store_secret(provider, secret)
+    try:
+        store_secret(provider, secret)
+    except Exception as exc:
+        raise click.ClickException(
+            f"Could not store the key in the system keyring: {exc}\n"
+            f"Try exporting {_env_var(provider)}=... as a fallback."
+        ) from exc
     click.echo(f"Stored {provider} API key in the local keyring.")
     click.echo(f"Validate it with: decibench auth test {provider}")
 
