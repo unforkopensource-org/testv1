@@ -136,6 +136,7 @@ class Scenario(BaseModel):
 class EventType(StrEnum):
     AGENT_AUDIO = "agent_audio"
     AGENT_TRANSCRIPT = "agent_transcript"
+    CALLER_AUDIO_END = "caller_audio_end"
     TOOL_CALL = "tool_call"
     TOOL_RESULT = "tool_result"
     INTERRUPTION = "interruption"

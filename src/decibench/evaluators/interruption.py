@@ -104,12 +104,21 @@ class InterruptionEvaluator(BaseEvaluator):
         """Detect overlapping agent/caller audio (double-talk).
 
         Returns total overlap duration in milliseconds.
+
+        Two modes:
+        1. If CALLER_AUDIO_END events exist (real caller timing), measure
+           actual overlap between caller audio spans and agent audio.
+        2. Fallback: measure how long the agent kept sending audio after
+           an INTERRUPTION signal (connector-reported).
         """
         events = summary.events
 
-        # Detect overlap between agent audio and interruption events.
-        # Connectors don't emit CALLER_AUDIO, so we measure how long
-        # the agent kept sending audio after an interruption signal.
+        # Check if we have real caller audio timing
+        caller_end_times = [
+            e.timestamp_ms for e in events
+            if e.type == EventType.CALLER_AUDIO_END
+        ]
+
         interruption_times = [
             e.timestamp_ms for e in events if e.type == EventType.INTERRUPTION
         ]
@@ -117,28 +126,53 @@ class InterruptionEvaluator(BaseEvaluator):
             return 0.0
 
         total_overlap = 0.0
-        for int_time in interruption_times:
-            # Collect agent audio events within 3s after interruption
-            post_int_audio = [
-                e for e in events
-                if e.type == EventType.AGENT_AUDIO
-                and int_time < e.timestamp_ms < int_time + 3000
-            ]
-            if len(post_int_audio) >= 2:
-                # Use timestamp span of overlapping audio
-                first_ts = post_int_audio[0].timestamp_ms
-                last_ts = post_int_audio[-1].timestamp_ms
-                # Add one chunk duration estimate for the last event
-                chunk_ms = (last_ts - first_ts) / (len(post_int_audio) - 1)
-                total_overlap += (last_ts - first_ts) + chunk_ms
-            elif len(post_int_audio) == 1:
-                # Single audio event: estimate chunk from audio data size
-                evt = post_int_audio[0]
-                if evt.audio:
-                    # 16-bit PCM at 16kHz = 32000 bytes/sec
-                    total_overlap += len(evt.audio) / 32.0
-                else:
-                    total_overlap += 100.0  # Conservative fallback
+
+        if caller_end_times:
+            # Mode 1: Real caller timing available.
+            # For each interruption, find the closest caller_audio_end
+            # and measure agent audio that overlaps with caller speech.
+            for int_time in interruption_times:
+                # Find caller speech end nearest to (and after) interruption
+                caller_end = min(
+                    (t for t in caller_end_times if t >= int_time),
+                    default=int_time,
+                )
+                # Agent audio between interruption and caller speech end
+                # is true double-talk
+                overlapping = [
+                    e for e in events
+                    if e.type == EventType.AGENT_AUDIO
+                    and int_time <= e.timestamp_ms <= caller_end + 500
+                ]
+                if len(overlapping) >= 2:
+                    span = overlapping[-1].timestamp_ms - overlapping[0].timestamp_ms
+                    chunk = span / (len(overlapping) - 1)
+                    total_overlap += span + chunk
+                elif len(overlapping) == 1:
+                    evt = overlapping[0]
+                    if evt.audio:
+                        total_overlap += len(evt.audio) / 32.0
+                    else:
+                        total_overlap += 100.0
+        else:
+            # Mode 2: Fallback — no caller timing, use interruption signal
+            for int_time in interruption_times:
+                post_int_audio = [
+                    e for e in events
+                    if e.type == EventType.AGENT_AUDIO
+                    and int_time < e.timestamp_ms < int_time + 3000
+                ]
+                if len(post_int_audio) >= 2:
+                    first_ts = post_int_audio[0].timestamp_ms
+                    last_ts = post_int_audio[-1].timestamp_ms
+                    chunk_ms = (last_ts - first_ts) / (len(post_int_audio) - 1)
+                    total_overlap += (last_ts - first_ts) + chunk_ms
+                elif len(post_int_audio) == 1:
+                    evt = post_int_audio[0]
+                    if evt.audio:
+                        total_overlap += len(evt.audio) / 32.0
+                    else:
+                        total_overlap += 100.0
 
         return total_overlap
 

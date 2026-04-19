@@ -38,19 +38,25 @@ class TaskCompletionEvaluator(BaseEvaluator):
     ) -> list[MetricResult]:
         results: list[MetricResult] = []
 
+        has_tool_mocks = bool(scenario.tool_mocks)
+        slot_score = self._check_slot_extraction(scenario, summary, transcript)
+        has_slots = slot_score is not None
+
         # --- Deterministic: check tool calls match expectations ---
-        tool_score = self._check_tool_calls(scenario, summary)
-        results.append(MetricResult(
-            name="tool_call_correctness",
-            value=round(tool_score, 1),
-            unit="%",
-            passed=tool_score >= 95.0,
-            threshold=95.0,
-        ))
+        if has_tool_mocks:
+            tool_score = self._check_tool_calls(scenario, summary)
+            results.append(MetricResult(
+                name="tool_call_correctness",
+                value=round(tool_score, 1),
+                unit="%",
+                passed=tool_score >= 95.0,
+                threshold=95.0,
+            ))
+        else:
+            tool_score = None
 
         # --- Deterministic: slot extraction accuracy ---
-        slot_score = self._check_slot_extraction(scenario, summary, transcript)
-        if slot_score is not None:
+        if has_slots:
             results.append(MetricResult(
                 name="slot_extraction_accuracy",
                 value=round(slot_score, 1),
@@ -70,9 +76,14 @@ class TaskCompletionEvaluator(BaseEvaluator):
                 passed=judge_result >= 90.0,
                 threshold=90.0,
             ))
-        else:
-            # Without judge, derive from deterministic signals
-            deterministic_score = (tool_score + (slot_score or 100)) / 2
+        elif has_tool_mocks or has_slots:
+            # Without judge but with deterministic signals: average them
+            scores = []
+            if tool_score is not None:
+                scores.append(tool_score)
+            if slot_score is not None:
+                scores.append(slot_score)
+            deterministic_score = sum(scores) / len(scores)
             results.append(MetricResult(
                 name="task_completion",
                 value=round(deterministic_score, 1),
@@ -81,6 +92,9 @@ class TaskCompletionEvaluator(BaseEvaluator):
                 threshold=90.0,
                 details={"method": "deterministic_only"},
             ))
+        # else: no mocks, no slots, no judge → return NO task_completion
+        # metric.  The score calculator will exclude this category from
+        # the weighted average instead of giving a free 100%.
 
         return results
 

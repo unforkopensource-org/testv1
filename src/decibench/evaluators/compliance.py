@@ -67,9 +67,15 @@ class ComplianceEvaluator(BaseEvaluator):
         context: dict[str, Any],
     ) -> list[MetricResult]:
         results: list[MetricResult] = []
-        agent_text = transcript.text.lower()
 
-        # --- PII Detection in agent responses ---
+        # Extract ONLY agent speech for PII scanning.
+        # The old approach scanned transcript.text (full conversation)
+        # which includes caller-provided PII — if the caller says
+        # "my SSN is 123-45-6789", that's not a compliance violation
+        # by the agent.  We only flag PII that the AGENT produces.
+        agent_text = self._extract_agent_text(transcript)
+
+        # --- PII Detection in agent responses only ---
         pii_violations = self._detect_pii(agent_text)
         results.append(MetricResult(
             name="pii_violations",
@@ -111,6 +117,25 @@ class ComplianceEvaluator(BaseEvaluator):
         ))
 
         return results
+
+    @staticmethod
+    def _extract_agent_text(transcript: TranscriptResult) -> str:
+        """Extract only agent speech from the transcript.
+
+        If segments with role info are available, filter to agent-only.
+        Falls back to full transcript.text if no segments (with a warning
+        in details that caller PII may be included).
+        """
+        if transcript.segments:
+            agent_parts = [
+                seg.text.lower()
+                for seg in transcript.segments
+                if seg.role in ("agent", "assistant", "")
+            ]
+            if agent_parts:
+                return " ".join(agent_parts)
+        # Fallback: no segmented roles available
+        return transcript.text.lower()
 
     @staticmethod
     def _detect_pii(text: str) -> list[dict[str, str]]:

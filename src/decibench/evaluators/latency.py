@@ -121,10 +121,46 @@ class LatencyEvaluator(BaseEvaluator):
 
     @staticmethod
     def _calculate_ttfw(events: list[Any]) -> float | None:
-        """Time to First Word: time from start to first agent audio/transcript."""
+        """Time to First Word: time from caller finish to first agent response.
+
+        Measures from the earliest reliable "caller finished speaking"
+        anchor to the first agent audio/transcript event.
+
+        Anchors (in priority order):
+        1. CALLER_AUDIO_END — recorded when caller audio finishes sending
+        2. First TURN_END with role=caller — connector-reported turn boundary
+        3. Fallback: t=0 (call start) — least accurate but always available
+
+        The old approach always used t=0, which measured connection setup
+        + caller speech duration + agent processing, conflating everything.
+        """
+        # Find the best "caller finished" anchor
+        anchor_ms = 0.0
+
+        # Priority 1: CALLER_AUDIO_END (most accurate)
         for event in events:
-            if event.type in (EventType.AGENT_AUDIO, EventType.AGENT_TRANSCRIPT):
-                return float(event.timestamp_ms)
+            if event.type == EventType.CALLER_AUDIO_END:
+                anchor_ms = event.timestamp_ms
+                break
+
+        # Priority 2: First caller TURN_END
+        if anchor_ms == 0.0:
+            for event in events:
+                if (
+                    event.type == EventType.TURN_END
+                    and event.data.get("role") == "caller"
+                ):
+                    anchor_ms = event.timestamp_ms
+                    break
+
+        # Find first agent response after anchor
+        for event in events:
+            if (
+                event.type in (EventType.AGENT_AUDIO, EventType.AGENT_TRANSCRIPT)
+                and event.timestamp_ms > anchor_ms
+            ):
+                return event.timestamp_ms - anchor_ms
+
         return None
 
     @staticmethod

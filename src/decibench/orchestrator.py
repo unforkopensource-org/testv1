@@ -27,6 +27,7 @@ from decibench.evaluators.stoi import STOIEvaluator
 from decibench.evaluators.task import TaskCompletionEvaluator
 from decibench.evaluators.wer import WEREvaluator
 from decibench.models import (
+    AgentEvent,
     AudioBuffer,
     CallSummary,
     CostBreakdown,
@@ -356,6 +357,19 @@ class Orchestrator:
                 turn_start = time.monotonic()
                 await connector.send_audio(handle, caller_audio)
 
+                # Record when caller audio finished sending.
+                # This gives evaluators (interruption, latency) a real
+                # anchor for "caller finished speaking" timing.
+                caller_end_ms = (time.monotonic() - start) * 1000
+                summary_events_extra = summary.events if hasattr(summary, '_extra_events') else []
+                handle.state.setdefault("_extra_events", []).append(
+                    AgentEvent(
+                        type=EventType.CALLER_AUDIO_END,
+                        timestamp_ms=caller_end_ms,
+                        data={"turn_index": turn_idx},
+                    )
+                )
+
                 async for event in connector.receive_events(handle):
                     # Detect per-turn interruptions for real-time awareness
                     if event.type == EventType.INTERRUPTION:
@@ -375,6 +389,13 @@ class Orchestrator:
 
             # 4. Disconnect and get summary
             summary = await connector.disconnect(handle)
+
+            # Merge caller-timing events recorded during send_audio
+            extra_events = handle.state.get("_extra_events", [])
+            if extra_events:
+                merged_events = list(summary.events) + extra_events
+                merged_events.sort(key=lambda e: e.timestamp_ms)
+                summary = summary.model_copy(update={"events": merged_events})
 
             # 5. Transcribe agent response
             if is_demo:

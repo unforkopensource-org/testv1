@@ -265,21 +265,25 @@ class WEREvaluator(BaseEvaluator):
 
     @staticmethod
     def _get_reference_texts(scenario: Scenario) -> list[str]:
-        """Extract reference texts from scenario.
+        """Extract reference texts for ASR accuracy measurement.
 
-        Sources (in priority order):
-        1. Agent turn text (explicit expected response)
-        2. Caller turn text (for ASR accuracy of what was said)
+        WER measures transcription fidelity — did the STT correctly
+        transcribe what was actually said?  The only valid reference
+        is the *caller's* scripted text (we know exactly what the TTS
+        synthesized).  Comparing agent expected text vs agent actual
+        text conflates behavioral errors (agent said the wrong thing)
+        with ASR errors (STT mis-heard what was said), producing a
+        metric that is neither valid WER nor a useful quality signal.
+
+        Agent behavioral correctness is already covered by:
+        - keyword_presence / keyword_absence (per-turn keyword checks)
+        - task_completion evaluator (goal achievement)
+        - hallucination evaluator (factual grounding)
         """
         refs: list[str] = []
         for turn in scenario.conversation:
-            if turn.role == "agent" and turn.text:
+            if turn.role == "caller" and turn.text:
                 refs.append(turn.text)
-        # If no agent text, use caller text for ASR accuracy measurement
-        if not refs:
-            for turn in scenario.conversation:
-                if turn.role == "caller" and turn.text:
-                    refs.append(turn.text)
         return refs
 
     @staticmethod
