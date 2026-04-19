@@ -7,7 +7,7 @@ Protocol behavior is configurable via ``ws_protocol`` preset or individual keys:
 
 - ``ws_protocol``       — preset name: ``"auto"``, ``"raw-pcm"``,
                           ``"openai-realtime"``, ``"twilio"``,
-                          ``"gemini-live"`` (default: ``"auto"``)
+                          ``"gemini-live"``, ``"text"`` (default: ``"auto"``)
 - ``sample_rate``       — audio sample rate in Hz (default: 16000)
 - ``websocket_headers`` — dict of extra HTTP headers for the WS handshake
 - ``ws_send_format``    — ``"binary"`` (default), ``"json_base64"``, or
@@ -77,6 +77,12 @@ PROTOCOL_PRESETS: dict[str, dict[str, Any]] = {
         "sample_rate": 16000,
         "ws_send_format": "json_base64",
         "ws_recv_timeout": 5.0,
+        "ws_silence_max": 3,
+    },
+    "text": {
+        "sample_rate": 16000,
+        "ws_send_format": "text",
+        "ws_recv_timeout": 8.0,
         "ws_silence_max": 3,
     },
 }
@@ -234,14 +240,15 @@ class WebSocketConnector(BaseConnector):
 
         If the server sends a greeting/session message within 3 seconds, we
         use it to pick a protocol preset. The message is buffered and replayed
-        in ``receive_events``. If nothing arrives, we stay on raw-pcm defaults.
+        in ``receive_events``. If nothing arrives, we send a short binary probe
+        to distinguish raw-pcm agents from text-input agents.
         """
         try:
             message = await asyncio.wait_for(self._ws.recv(), timeout=3.0)
         except (TimeoutError, Exception):
-            # No greeting — agent waits for audio first. Keep raw-pcm defaults.
-            logger.debug("Auto-detect: no initial message, using raw-pcm defaults")
-            self._detected_protocol = "raw-pcm"
+            # No greeting — probe to distinguish binary vs text agents
+            logger.debug("Auto-detect: no initial message, probing with binary")
+            await self._probe_binary_or_text()
             return
 
         # Buffer the message so receive_events can replay it
@@ -274,6 +281,60 @@ class WebSocketConnector(BaseConnector):
             logger.debug("Auto-detect: server sent binary, using raw-pcm")
             self._detected_protocol = "raw-pcm"
 
+    async def _probe_binary_or_text(self) -> None:
+        """Send a tiny binary probe to see if the server accepts it.
+
+        If the server drops the connection on binary, reconnect and switch to
+        text mode. Many voice agent wrappers accept plain text input and
+        respond with JSON transcript + audio.
+        """
+        import websockets
+
+        # Send 100 bytes of silence as a probe
+        try:
+            await self._ws.send(b"\x00" * 100)
+            # Wait briefly for a response or disconnect
+            try:
+                msg = await asyncio.wait_for(self._ws.recv(), timeout=2.0)
+                # Server accepted binary and responded — raw-pcm works
+                self._initial_message = msg
+                self._detected_protocol = "raw-pcm"
+                logger.info("Auto-detect: server accepted binary probe, using raw-pcm")
+                return
+            except TimeoutError:
+                # Server accepted binary but didn't respond yet — assume raw-pcm
+                self._detected_protocol = "raw-pcm"
+                logger.info("Auto-detect: binary accepted (no response yet), using raw-pcm")
+                return
+        except Exception:
+            # Binary probe caused disconnect — this is a text-input agent
+            logger.info("Auto-detect: server rejected binary, switching to text mode")
+
+        # Reconnect for text mode
+        try:
+            # Reconstruct URL from the original connection
+            orig_url = str(self._ws.request.url) if hasattr(self._ws, 'request') else None
+            if orig_url is None:
+                # Fallback: can't reconnect, just set text mode on broken connection
+                self._detected_protocol = "text"
+                self._apply_preset("text")
+                return
+
+            self._ws = await websockets.connect(
+                orig_url,
+                max_size=10 * 1024 * 1024,
+                ping_interval=30,
+                ping_timeout=30,
+                close_timeout=10,
+            )
+            self._detected_protocol = "text"
+            self._apply_preset("text")
+            logger.info("Auto-detect: reconnected in text mode (send_format=text)")
+        except Exception as exc:
+            logger.warning("Auto-detect: reconnect failed after binary probe: %s", exc)
+            self._detected_protocol = "text"
+            self._apply_preset("text")
+
     def _apply_preset(self, preset_name: str) -> None:
         """Apply a protocol preset, updating internal state."""
         preset = PROTOCOL_PRESETS.get(preset_name)
@@ -302,6 +363,15 @@ class WebSocketConnector(BaseConnector):
             raise RuntimeError(msg)
 
         self._send_count += 1
+
+        # Text mode: send the caller's text directly instead of audio.
+        # The orchestrator stores caller text in handle.state.
+        if self._send_format == "text":
+            caller_text = handle.state.get(f"caller_text_{self._send_count}", "")
+            if caller_text:
+                await self._ws.send(caller_text)
+                logger.debug("Sent caller text: %s", caller_text[:80])
+            return
 
         # Send audio in chunks to simulate real-time streaming
         chunk_size = _DEFAULT_CHUNK_BYTES
